@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 0; background: #151922; color: #FFF; font-family: sans-serif; }
+  .toolbar { margin-bottom: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; border: none; }
+  .btn-undo { background: #4A5568; color: #00E5FF; border: 1px solid #00E5FF; }
+  .btn-add { background: #00E676; color: #000; }
+  .btn-del { background: #D32F2F; color: #FFF; }
+  .btn-copy { background: #00E5FF; color: #000; }
+  .btn-tool { background: #262A36; color: #FFF; border: 1px solid #666; }
+  #viewportContainer { width: 100%; height: 620px; overflow: hidden; position: relative; background: #0B0E14; border: 1px solid #333; border-radius: 4px; }
+  canvas { position: absolute; left: 0; top: 0; cursor: crosshair; }
+  .footer-tip { margin-top: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #7A889B; }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button onclick="undoStep()" class="btn-undo">↩ 回復上一步驟 (Ctrl+Z)</button>
+    <button id="addModeBtn" onclick="toggleAddMode()" class="btn-add">➕ 手動新增區域模式 (關閉中)</button>
+    <button onclick="finishAddPolygon()" id="finishBtn" style="display:none; background:#FFD600; color:#000;">✅ 閉合並完成新增</button>
+    <button onclick="deleteSelectedPoly()" class="btn-del">🗑️ 刪除選定之破壞單元</button>
+    <button onclick="copyData()" class="btn-copy">📋 複製最新編輯成果</button>
+    <div style="border-left:1px solid #444; height:24px; margin:0 4px;"></div>
+    <button onclick="zoomIn()" class="btn-tool">🔍 (+)</button>
+    <button onclick="zoomOut()" class="btn-tool">🔍 (-)</button>
+    <button onclick="resetView()" class="btn-tool">⟲ 重置視圖</button>
+    <span id="scaleLabel" style="color:#8F9CAE; font-size:12px; margin-left:8px;">縮放: 100%</span>
+  </div>
+
+  <div id="viewportContainer">
+    <canvas id="slopeCanvas"></canvas>
+  </div>
+  
+  <div class="footer-tip">
+    <span id="tipText" style="color:#00E676; font-size:13px; font-weight:bold;">已成功載入破壞單元。點選多邊形變黃色後可整塊刪除；右鍵可刪除個別節點！</span>
+    <span>快捷鍵：Ctrl+Z 回復 ｜ Enter 閉合 ｜ 右鍵刪除頂點</span>
+  </div>
+
+<script>
+  let container = document.getElementById('viewportContainer');
+  let canvas = document.getElementById('slopeCanvas');
+  let ctx = canvas.getContext('2d');
+  
+  let imgOrigW = __IMG_ORIG_W__;
+  let imgOrigH = __IMG_ORIG_H__;
+  
+  let strokeColor = "__STROKE_COLOR__";
+  let lineStyle = "__LINE_STYLE__";
+  let strokeWidth = __STROKE_WIDTH__;
+
+  let bg = new Image();
+  bg.src = "data:image/jpeg;base64,__IMG_B64__";
+  
+  let polys = __POLYS_DATA__;
+  let historyStack = [JSON.parse(JSON.stringify(polys))];
+  
+  let selectedPolyIdx = -1;
+  let draggingPoint = null;
+  let dragPolyIdx = -1;
+  let dragPtIdx = -1;
+  
+  let isAddMode = false;
+  let newPolyPoints = [];
+
+  let zoom = 1.0;
+  let panX = 0;
+  let panY = 0;
+  let isPanning = false;
+  let startPanX = 0;
+  let startPanY = 0;
+
+  function pushHistory() {
+    if(historyStack.length > 30) historyStack.shift();
+    historyStack.push(JSON.parse(JSON.stringify(polys)));
+  }
+
+  function undoStep() {
+    if(historyStack.length > 1) {
+      historyStack.pop();
+      polys = JSON.parse(JSON.stringify(historyStack[historyStack.length - 1]));
+      selectedPolyIdx = -1;
+      draggingPoint = null;
+      document.getElementById('tipText').innerText = "已成功回復上一步驟！";
+      draw();
+    } else {
+      document.getElementById('tipText').innerText = "已回溯至初始狀態。";
+    }
+  }
+
+  function resizeCanvas() {
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+    if(zoom === 1.0 && panX === 0 && panY === 0) {
+      resetView();
+    } else {
+      draw();
+    }
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  bg.onload = function() {
+    resizeCanvas();
+    resetView();
+  };
+
+  function resetView() {
+    let cw = container.clientWidth;
+    let ch = container.clientHeight;
+    let scaleW = cw / imgOrigW;
+    let scaleH = ch / imgOrigH;
+    zoom = Math.min(scaleW, scaleH) * 0.96;
+    panX = (cw - imgOrigW * zoom) / 2;
+    panY = (ch - imgOrigH * zoom) / 2;
+    document.getElementById('scaleLabel').innerText = "縮放: " + Math.round((zoom / Math.min(scaleW, scaleH)) * 100) + "%";
+    draw();
+  }
+
+  function zoomIn() { zoom *= 1.25; draw(); }
+  function zoomOut() { zoom /= 1.25; draw(); }
+
+  function toCanvasCoord(ox, oy) { return [ox * zoom + panX, oy * zoom + panY]; }
+  function toOrigCoord(cx, cy) { return [(cx - panX) / zoom, (cy - panY) / zoom]; }
+
+  function toggleAddMode() {
+    isAddMode = !isAddMode;
+    let btn = document.getElementById('addModeBtn');
+    let finishBtn = document.getElementById('finishBtn');
+    if(isAddMode) {
+      btn.style.background = "#FF5252";
+      btn.style.color = "#FFF";
+      btn.innerText = "✖ 退出新增模式";
+      finishBtn.style.display = "inline-block";
+      newPolyPoints = [];
+      document.getElementById('tipText').innerText = "【新增模式中】：點擊滑鼠左鍵畫點；按 Enter 鍵閉合！";
+    } else {
+      btn.style.background = "#00E676";
+      btn.style.color = "#000";
+      btn.innerText = "➕ 手動新增區域模式 (關閉中)";
+      finishBtn.style.display = "none";
+      newPolyPoints = [];
+      document.getElementById('tipText').innerText = "已退出新增模式。";
+    }
+    draw();
+  }
+
+  function finishAddPolygon() {
+    if(newPolyPoints.length >= 3) {
+      pushHistory();
+      polys.push(newPolyPoints);
+      document.getElementById('tipText').innerText = "已成功新增 1 處邊坡破壞單元！";
+      toggleAddMode();
+    } else {
+      alert("新增多邊形至少需要 3 個頂點！");
+    }
+  }
+
+  window.addEventListener('keydown', function(e) {
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      undoStep();
+    } else if(isAddMode && (e.key === 'Enter' || e.key === 'Escape')) {
+      finishAddPolygon();
+    }
+  });
+
+  function applyDashPattern(ctxObj) {
+    if (lineStyle === "solid") {
+      ctxObj.setLineDash([]);
+    } else if (lineStyle === "dashed") {
+      ctxObj.setLineDash([8, 6]);
+    } else if (lineStyle === "centerline") {
+      ctxObj.setLineDash([14, 5, 3, 5]); // 長-空-短-空
+    } else if (lineStyle === "dotted") {
+      ctxObj.setLineDash([3, 4]);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.translate(panX, panY);
+    ctx.scale(zoom, zoom);
+    ctx.drawImage(bg, 0, 0, imgOrigW, imgOrigH);
+    ctx.restore();
+
+    polys.forEach((poly, pIdx) => {
+      if(poly.length < 2) return;
+      let isSel = (pIdx === selectedPolyIdx);
+      
+      ctx.save();
+      ctx.beginPath();
+      applyDashPattern(ctx);
+      ctx.strokeStyle = isSel ? "#FFD600" : strokeColor;
+      ctx.lineWidth = isSel ? Math.max(4, strokeWidth + 1) : strokeWidth;
+      ctx.fillStyle = isSel ? "rgba(255, 214, 0, 0.3)" : "rgba(255, 0, 0, 0.2)";
+      
+      let [c0x, c0y] = toCanvasCoord(poly[0][0], poly[0][1]);
+      ctx.moveTo(c0x, c0y);
+      for(let i=1; i<poly.length; i++) {
+        let [cx, cy] = toCanvasCoord(poly[i][0], poly[i][1]);
+        ctx.lineTo(cx, cy);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      ctx.restore();
+
+      poly.forEach((pt) => {
+        let [cx, cy] = toCanvasCoord(pt[0], pt[1]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, isSel ? 7 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = isSel ? "#FFD600" : "#FFFFFF";
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2;
+        ctx.fill();
+        ctx.stroke();
+      });
+    });
+
+    if(isAddMode && newPolyPoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = "#00E5FF";
+      ctx.lineWidth = 3;
+      ctx.fillStyle = "rgba(0, 229, 255, 0.25)";
+      
+      let [c0x, c0y] = toCanvasCoord(newPolyPoints[0][0], newPolyPoints[0][1]);
+      ctx.moveTo(c0x, c0y);
+      for(let i=1; i<newPolyPoints.length; i++) {
+        let [cx, cy] = toCanvasCoord(newPolyPoints[i][0], newPolyPoints[i][1]);
+        ctx.lineTo(cx, cy);
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      newPolyPoints.forEach((pt, idx) => {
+        let [cx, cy] = toCanvasCoord(pt[0], pt[1]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, idx === 0 ? 8 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = idx === 0 ? "#FFD600" : "#00E5FF";
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.lineWidth = 2;
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
+  }
+
+  canvas.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    let rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+    let [origX, origY] = toOrigCoord(mx, my);
+    let factor = e.deltaY < 0 ? 1.15 : 0.85;
+    zoom *= factor;
+    panX = mx - origX * zoom;
+    panY = my - origY * zoom;
+    draw();
+  }, {passive: false});
+
+  canvas.onmousedown = function(e) {
+    let rect = canvas.getBoundingClientRect();
+    let cx = e.clientX - rect.left;
+    let cy = e.clientY - rect.top;
+
+    if(isAddMode) {
+      let [ox, oy] = toOrigCoord(cx, cy);
+      ox = Math.round(Math.max(0, Math.min(imgOrigW, ox)));
+      oy = Math.round(Math.max(0, Math.min(imgOrigH, oy)));
+      
+      if(newPolyPoints.length >= 3) {
+        let [firstX, firstY] = toCanvasCoord(newPolyPoints[0][0], newPolyPoints[0][1]);
+        if(Math.hypot(firstX - cx, firstY - cy) < 14) {
+          finishAddPolygon();
+          return;
+        }
+      }
+      newPolyPoints.push([ox, oy]);
+      draw();
+      return;
+    }
+
+    if(e.button === 2) {
+      e.preventDefault();
+      for(let p=0; p<polys.length; p++) {
+        for(let i=0; i<polys[p].length; i++) {
+          let [ptx, pty] = toCanvasCoord(polys[p][i][0], polys[p][i][1]);
+          if(Math.hypot(ptx - cx, pty - cy) < 10) {
+            pushHistory();
+            if(polys[p].length > 3) {
+              polys[p].splice(i, 1);
+              document.getElementById('tipText').innerText = "已刪除該單一節點！(可按 Ctrl+Z 回復)";
+            } else {
+              polys.splice(p, 1);
+              selectedPolyIdx = -1;
+              document.getElementById('tipText').innerText = "節點不足 3 點，已刪除整塊多邊形！(可按 Ctrl+Z 回復)";
+            }
+            draw();
+            return;
+          }
+        }
+      }
+      return;
+    }
+
+    for(let p=0; p<polys.length; p++) {
+      for(let i=0; i<polys[p].length; i++) {
+        let [ptx, pty] = toCanvasCoord(polys[p][i][0], polys[p][i][1]);
+        if(Math.hypot(ptx - cx, pty - cy) < 10) {
+          pushHistory();
+          draggingPoint = polys[p][i];
+          dragPolyIdx = p;
+          dragPtIdx = i;
+          selectedPolyIdx = p;
+          draw();
+          return;
+        }
+      }
+    }
+
+    let hitPoly = false;
+    for(let p=0; p<polys.length; p++) {
+      if(isPointInPoly(cx, cy, polys[p])) {
+        selectedPolyIdx = p;
+        hitPoly = true;
+        document.getElementById('tipText').innerText = "已選中 Zone " + (p+1) + " (黃色外框)，可點擊上方按鈕直接刪除。";
+        draw();
+        break;
+      }
+    }
+
+    if(!hitPoly) {
+      selectedPolyIdx = -1;
+      isPanning = true;
+      startPanX = cx - panX;
+      startPanY = cy - panY;
+      draw();
+    }
+  };
+
+  canvas.oncontextmenu = function(e) { e.preventDefault(); };
+
+  canvas.onmousemove = function(e) {
+    let rect = canvas.getBoundingClientRect();
+    let cx = e.clientX - rect.left;
+    let cy = e.clientY - rect.top;
+
+    if(draggingPoint) {
+      let [ox, oy] = toOrigCoord(cx, cy);
+      draggingPoint[0] = Math.round(Math.max(0, Math.min(imgOrigW, ox)));
+      draggingPoint[1] = Math.round(Math.max(0, Math.min(imgOrigH, oy)));
+      draw();
+    } else if(isPanning) {
+      panX = cx - startPanX;
+      panY = cy - startPanY;
+      draw();
+    }
+  };
+
+  window.onmouseup = function() {
+    draggingPoint = null;
+    isPanning = false;
+  };
+
+  function isPointInPoly(cx, cy, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      let [xi, yi] = toCanvasCoord(poly[i][0], poly[i][1]);
+      let [xj, yj] = toCanvasCoord(poly[j][0], poly[j][1]);
+      let intersect = ((yi > cy) !== (yj > cy)) && (cx < (xj - xi) * (cy - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function deleteSelectedPoly() {
+    if(selectedPolyIdx >= 0 && selectedPolyIdx < polys.length) {
+      pushHistory();
+      polys.splice(selectedPolyIdx, 1);
+      selectedPolyIdx = -1;
+      document.getElementById('tipText').innerText = "已刪除選定的破壞單元！(可按 Ctrl+Z 回復)";
+      draw();
+    } else {
+      alert("請先用滑鼠點擊選定欲刪除的破壞區域 (外框呈黃色)！");
+    }
+  }
+
+  function copyData() {
+    navigator.clipboard.writeText(JSON.stringify(polys));
+    document.getElementById('tipText').innerText = "已複製最新編輯坐標 (共 " + polys.length + " 處單元)！請貼至下方套用。";
+  }
+</script>
+</body>
+</html>
