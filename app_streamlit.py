@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+import openpyxl
+from datetime import datetime
 from PIL import Image
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
@@ -93,9 +95,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # ==============================================================================
-# 邊坡分析核心引擎 (Canny 邊緣檢測與強效防護版)
+# 邊坡分析核心引擎
 # ==============================================================================
 class SlopeVisionEngine:
     @staticmethod
@@ -209,7 +210,39 @@ class SlopeVisionEngine:
 
 
 # ==============================================================================
-# 報表匯出引擎 (完美對齊滾動前/後影像)
+# 智慧資料反轉引擎 (處理雙欄公文轉回一維資料)
+# ==============================================================================
+def load_and_clean_db(file_obj_or_path):
+    df_preview = pd.read_excel(file_obj_or_path)
+    
+    if len(df_preview.columns) >= 11 or "蘇花公路邊坡分級管制樁號位置表" in df_preview.columns:
+        df_raw = pd.read_excel(file_obj_or_path, header=None)
+        
+        header_row_idx = -1
+        for i in range(min(10, len(df_raw))):
+            row_vals = [str(x).strip() for x in df_raw.iloc[i].values]
+            if '里程樁' in row_vals and '分級' in row_vals:
+                header_row_idx = i
+                break
+                
+        if header_row_idx != -1:
+            data_rows = df_raw.iloc[header_row_idx+1:].copy()
+            left_df = data_rows.iloc[:, 0:6].copy()
+            left_df.columns = ["編號", "里程樁", "順/逆樁", "分級", "發生日期", "預計調降日期"]
+            right_df = data_rows.iloc[:, 6:12].copy()
+            right_df.columns = ["編號", "里程樁", "順/逆樁", "分級", "發生日期", "預計調降日期"]
+            
+            flat_df = pd.concat([left_df, right_df], ignore_index=True)
+            flat_df.dropna(subset=['編號', '里程樁'], how='all', inplace=True)
+            flat_df['編號'] = pd.to_numeric(flat_df['編號'], errors='coerce')
+            flat_df.dropna(subset=['編號'], inplace=True)
+            flat_df.sort_values(by='編號', inplace=True)
+            return flat_df.reset_index(drop=True)
+            
+    return df_preview
+
+# ==============================================================================
+# 報表匯出引擎 
 # ==============================================================================
 class SlopeReportGenerator:
     @staticmethod
@@ -222,7 +255,6 @@ class SlopeReportGenerator:
             for z_i, p_pts in enumerate(polys, 1):
                 for v_i, pt in enumerate(p_pts, 1):
                     export_rows.append({"單元": f"Zone {z_i}", "序號": v_i, "X": int(pt[0]), "Y": int(pt[1])})
-
             pd.DataFrame(export_rows).to_excel(writer, index=False, sheet_name='節點坐標')
 
             wb = writer.book
@@ -239,18 +271,15 @@ class SlopeReportGenerator:
             border_cell = Border(left=thin, right=thin, top=thin, bottom=thin)
 
             col_widths = {'A': 15, 'B': 17, 'C': 17, 'D': 17, 'E': 15, 'F': 17, 'G': 17, 'H': 17}
-            for col, w in col_widths.items():
-                ws.column_dimensions[col].width = w
+            for col, w in col_widths.items(): ws.column_dimensions[col].width = w
 
             ws.merge_cells('A1:H1')
             ws['A1'] = "交通部公路局東區養護工程分局"
             ws['A1'].font = font_title
-            ws['A1'].alignment = Alignment(horizontal="center", vertical="center")
-
+            
             ws.merge_cells('A2:H2')
             ws['A2'] = "邊坡滾動分級表"
             ws['A2'].font = font_sub
-            ws['A2'].alignment = Alignment(horizontal="center", vertical="center")
 
             ws['A3'] = "養護單位"
             ws.merge_cells('B3:D3')
@@ -261,7 +290,8 @@ class SlopeReportGenerator:
 
             ws['A4'] = "邊坡位置"
             ws.merge_cells('B4:D4')
-            ws['B4'] = f"{route_name}{start_mil}~{end_mil}\n({route_name}{spec_mil})"
+            if spec_mil: ws['B4'] = f"{route_name}{start_mil}~{end_mil}\n({route_name}{spec_mil})"
+            else: ws['B4'] = f"{route_name}{start_mil}~{end_mil}"
             ws['E4'] = "里 程"
             ws.merge_cells('F4:H4')
             box_shun = "■" if "順" in slope_dir else "□"
@@ -271,7 +301,7 @@ class SlopeReportGenerator:
             ws['A5'] = "災害所需經費"
             ws.merge_cells('B5:D5')
             ws['B5'] = cost_val
-            ws['E5'] = "邊坡等級調\n整"
+            ws['E5'] = "邊坡等級\n調 整"
             ws.merge_cells('F5:H5')
             ws['F5'] = f"{orig_level}    →    {new_level}"
 
@@ -288,30 +318,46 @@ class SlopeReportGenerator:
             ws.merge_cells('E8:H8')
             ws['E8'] = "邊坡滾動後"
 
-            # 預留圖片空間
-            for r in range(9, 23):
-                ws.row_dimensions[r].height = 22
-
             ws['A23'] = "備 註"
             ws.merge_cells('B23:H23')
             ws['B23'] = memo_desc
 
             ws.merge_cells('A24:D24')
-            ws['A24'] = "工務段：\n\n聘用高級工程師 張仁瀚"
+            ws['A24'] = "工務段：\n\n\n\n\n聘用高級工程師 張仁瀚"
             ws.merge_cells('E24:H24')
-            ws['E24'] = "主管單位：\n\n段長 劉錦龍"
-            ws.row_dimensions[24].height = 45
+            ws['E24'] = "主管單位：\n\n\n\n\n段長 劉錦龍"
 
             ws.merge_cells('A25:H25')
             ws['A25'] = "註：本報告表係用於邊坡調整適用之，1式3份報分局核定。"
             ws['A25'].font = font_note
             ws['A25'].alignment = Alignment(horizontal="left", vertical="center")
 
-            for r in range(3, 25):
+            ws.row_dimensions[1].height = 25
+            ws.row_dimensions[2].height = 25
+            ws.row_dimensions[3].height = 35
+            ws.row_dimensions[4].height = 45
+            ws.row_dimensions[5].height = 35
+            ws.row_dimensions[6].height = 60
+            ws.row_dimensions[7].height = 45
+            ws.row_dimensions[8].height = 25
+            
+            ws.merge_cells('A9:D22')
+            ws.merge_cells('E9:H22')
+            for r in range(9, 23): ws.row_dimensions[r].height = 23
+                
+            ws.row_dimensions[23].height = 45
+            ws.row_dimensions[24].height = 100
+            ws.row_dimensions[25].height = 20
+
+            for r in range(1, 25):
                 for col_idx in range(1, 9):
                     cell = ws.cell(row=r, column=col_idx)
-                    cell.border = border_cell
-                    if col_idx in [1, 5] and r in [3, 4, 5, 6, 7, 23]:
+                    if r >= 3: cell.border = border_cell
+                    if r in [1, 2]: cell.alignment = Alignment(horizontal="center", vertical="center")
+                    elif r == 24:
+                        cell.font = font_content
+                        cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+                    elif col_idx in [1, 5] and r in [3, 4, 5, 6, 7, 23]:
                         cell.fill = fill_header
                         cell.font = font_header
                         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -319,30 +365,24 @@ class SlopeReportGenerator:
                         cell.fill = fill_header
                         cell.font = font_header
                         cell.alignment = Alignment(horizontal="center", vertical="center")
-                    else:
+                    elif r >= 3:
                         cell.font = font_content
                         cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-            # 強制統一調整滾動前、後圖片尺寸 (對齊排版)
             try:
                 from openpyxl.drawing.image import Image as OpenpyxlImage
                 target_w, target_h = 420, 315 
-                
                 if img_before is not None:
-                    img_b_resized = cv2.resize(img_before, (target_w, target_h), interpolation=cv2.INTER_AREA)
-                    buf_b = io.BytesIO(cv2.imencode('.png', img_b_resized)[1].tobytes())
+                    buf_b = io.BytesIO(cv2.imencode('.png', cv2.resize(img_before, (target_w, target_h), interpolation=cv2.INTER_AREA))[1].tobytes())
                     oxl_img_b = OpenpyxlImage(buf_b)
                     oxl_img_b.width, oxl_img_b.height = target_w, target_h
                     ws.add_image(oxl_img_b, "A9")
-                
                 if img_after is not None:
-                    img_a_resized = cv2.resize(img_after, (target_w, target_h), interpolation=cv2.INTER_AREA)
-                    buf_a = io.BytesIO(cv2.imencode('.png', img_a_resized)[1].tobytes())
+                    buf_a = io.BytesIO(cv2.imencode('.png', cv2.resize(img_after, (target_w, target_h), interpolation=cv2.INTER_AREA))[1].tobytes())
                     oxl_img_a = OpenpyxlImage(buf_a)
                     oxl_img_a.width, oxl_img_a.height = target_w, target_h
                     ws.add_image(oxl_img_a, "E9")
-            except Exception as e:
-                print(e)
+            except Exception as e: print(e)
 
         return output_excel.getvalue()
 
@@ -356,40 +396,208 @@ class SlopeReportGenerator:
         lines.extend(["0", "ENDSEC", "0", "EOF"])
         return "\n".join(lines).encode('utf-8')
 
+    @staticmethod
+    def build_master_control_table_via_template(df_db, active_mileages, template_path="蘇花公路邊坡分級管制樁號位置表（範本）xlsx.xlsx"):
+        """
+        讀取既有範本格式，解析 Raw Data 動態排版、排序編號後填入。
+        徹底實現版面設計與資料層的分離。
+        """
+        if not os.path.exists(template_path):
+            st.error(f"找不到範本檔：{template_path}，請確保該檔案在目錄下。")
+            return None
+
+        # 載入最新上傳的範本檔
+        wb = openpyxl.load_workbook(template_path)
+        ws = wb.active
+
+        df_clean = df_db.copy()
+        
+        # 抓取 Raw data 分級 (定性分級)
+        lvl_col = "定性分級" if "定性分級" in df_clean.columns else "分級"
+        
+        def extract_grade(g):
+            g_str = str(g).upper()
+            if 'A' in g_str: return 'A'
+            if 'B' in g_str: return 'B'
+            if 'C' in g_str: return 'C'
+            if 'D' in g_str: return 'D'
+            return 'Z'
+            
+        df_clean['SortGrade'] = df_clean[lvl_col].apply(extract_grade) if lvl_col in df_clean.columns else 'Z'
+        
+        # 動態分群與精確數值排序: 確保 12k 在 2k 之後
+        def parse_mileage(m_str):
+            try:
+                parts = str(m_str).lower().split('k')
+                if len(parts) == 2:
+                    km = float(parts[0])
+                    m = float(parts[1].replace('+', ''))
+                    return km * 1000 + m
+                return 999999.0
+            except:
+                return 999999.0
+
+        if '里程樁號(起)' in df_clean.columns:
+            df_clean['SortMileage'] = df_clean['里程樁號(起)'].apply(parse_mileage)
+        elif '里程樁' in df_clean.columns:
+            df_clean['SortMileage'] = df_clean['里程樁'].apply(parse_mileage)
+        else:
+            df_clean['SortMileage'] = 999999.0
+            
+        sort_cols = ['SortGrade']
+        if '路線' in df_clean.columns: sort_cols.append('路線')
+        sort_cols.append('SortMileage')
+            
+        df_sorted = df_clean.sort_values(by=sort_cols).reset_index(drop=True)
+        
+        # 統計數量
+        count_A = sum(df_sorted['SortGrade'] == 'A')
+        count_B = sum(df_sorted['SortGrade'] == 'B')
+        count_C = sum(df_sorted['SortGrade'] == 'C')
+        count_D = sum(df_sorted['SortGrade'] == 'D')
+        total_count = len(df_sorted)
+
+        # 覆寫範本上方統計列
+        ws['D3'], ws['E3'], ws['F3'], ws['G3'] = count_A, count_B, count_C, count_D
+        ws['H3'] = total_count
+
+        # 準備資料填入雙欄
+        font_content = Font(name="標楷體", size=10)
+        fill_active = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+        thin = Side(border_style="thin", color="000000")
+        border_cell = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        # 先清理範本原有的 5~200 行資料，確保畫面乾淨
+        for r in range(5, 200):
+            for c in range(1, 13):
+                cell = ws.cell(row=r, column=c)
+                cell.value = ""
+                cell.fill = PatternFill(fill_type=None)
+
+        half_len = (total_count + 1) // 2
+        
+        for idx, row in df_sorted.iterrows():
+            is_right_col = idx >= half_len
+            c_offset = 6 if is_right_col else 0
+            r_idx = 5 + (idx - half_len) if is_right_col else 5 + idx
+
+            ws.row_dimensions[r_idx].height = 16.5
+
+            # 1. 重新自動賦予編號
+            ws.cell(row=r_idx, column=c_offset+1, value=idx+1)
+            
+            # 2. 自動組合里程樁字串 (對應 Raw Data)
+            if "里程樁" in row and pd.notna(row["里程樁"]):
+                raw_full_mil = str(row["里程樁"]).replace("*", "")
+            else:
+                route = str(row.get("路線", ""))
+                start = str(row.get("里程樁號(起)", ""))
+                end = str(row.get("里程樁號(迄)", ""))
+                spec = str(row.get("特定樁號", ""))
+                
+                raw_full_mil = f"{route}{start}~{end}"
+                if spec and spec != "nan":
+                    raw_full_mil += f"({spec})"
+            
+            # 判斷是否為本次標記滾動
+            is_active = False
+            for act_m in active_mileages:
+                clean_act = act_m.replace("*", "")
+                if clean_act and (clean_act in raw_full_mil or raw_full_mil in clean_act):
+                    is_active = True
+                    break
+            
+            display_mil = f"*{raw_full_mil}" if is_active else raw_full_mil
+            ws.cell(row=r_idx, column=c_offset+2, value=display_mil)
+
+            # 3. 順/逆樁 (對應 Raw Data '方向' 或 '順/逆樁')
+            dir_val = str(row.get("順/逆樁", row.get("方向", "")))
+            if dir_val == "nan": dir_val = ""
+            ws.cell(row=r_idx, column=c_offset+3, value=dir_val)
+
+            # 4. 定性分級 (取出純淨 ABCD)
+            pure_grade = row['SortGrade']
+            ws.cell(row=r_idx, column=c_offset+4, value=pure_grade if pure_grade != 'Z' else "")
+
+            # 5. 發生日期 & 預計調降日期 (若 Raw Data 有紀錄則帶入)
+            date_val = str(row.get("發生日期", ""))
+            if date_val == "nan": date_val = ""
+            ws.cell(row=r_idx, column=c_offset+5, value=date_val)
+
+            fix_date = str(row.get("預計調降日期", ""))
+            if fix_date == "nan": fix_date = ""
+            ws.cell(row=r_idx, column=c_offset+6, value=fix_date)
+            
+            # 格線與字型套用
+            for c in range(1, 7):
+                cell = ws.cell(row=r_idx, column=c_offset+c)
+                cell.border = border_cell
+                cell.font = font_content
+                cell.alignment = Alignment(horizontal="left" if c in [2] else "center", vertical="center")
+                # 滾動的邊坡標記橘色底
+                if is_active:
+                    cell.fill = fill_active
+
+        output_excel = io.BytesIO()
+        wb.save(output_excel)
+        return output_excel.getvalue()
+
 
 # ==============================================================================
-# 側邊欄控制台 (包含邊坡分級 Excel 台帳載入)
+# 系統狀態與 Raw Data 資料庫管理
 # ==============================================================================
+if 'df_db' not in st.session_state:
+    # 預設載入 Raw Data，並自動壓平雙欄
+    if os.path.exists("邊坡資料.xlsx"):
+        st.session_state.df_db = load_and_clean_db("邊坡資料.xlsx")
+    elif os.path.exists("蘇花公路邊坡分級管制樁號位置表（範本）xlsx.xlsx"):
+        st.session_state.df_db = load_and_clean_db("蘇花公路邊坡分級管制樁號位置表（範本）xlsx.xlsx")
+    else:
+        st.session_state.df_db = pd.DataFrame()
+
+if 'active_mileages' not in st.session_state:
+    st.session_state.active_mileages = []
+
 with st.sidebar:
-    st.header("🗄️ 邊坡台帳資料庫")
-    db_file = st.file_uploader("匯入『邊坡分級.xlsx』(自動帶入台帳資料)", type=["xlsx"])
+    st.header("🗄️ Raw Data 邊坡台帳資料庫")
     
-    db_options = []
-    df_db = None
+    if not st.session_state.df_db.empty:
+        st.success("✅ 已載入台帳資料庫")
+    
+    db_file = st.file_uploader("手動更新 Raw Data 台帳覆蓋", type=["xlsx"])
     if db_file:
         try:
-            df_db = pd.read_excel(db_file)
-            # 嘗試抓取常見欄位名稱組成選單
-            for idx, row in df_db.iterrows():
-                r_name = row.get("路線", "未知路線")
-                r_start = row.get("起點里程", "")
-                r_end = row.get("迄點里程", "")
-                db_options.append(f"{r_name} {r_start}~{r_end} (Row {idx})")
+            st.session_state.df_db = load_and_clean_db(db_file)
+            st.success("✅ 已切換並壓平為最新台帳")
         except Exception:
-            st.error("讀取台帳失敗，請確認檔案格式。")
+            st.error("讀取失敗，請確認檔案格式。")
             
-    sel_slope = st.selectbox("選擇既有邊坡", db_options) if db_options else None
+    db_options = []
+    if not st.session_state.df_db.empty:
+        for idx, row in st.session_state.df_db.iterrows():
+            if "里程樁" in row and pd.notna(row["里程樁"]):
+                mil_str = str(row["里程樁"]).replace("*", "")
+            else:
+                r_name = str(row.get("路線", ""))
+                r_start = str(row.get("里程樁號(起)", ""))
+                r_end = str(row.get("里程樁號(迄)", ""))
+                r_spec = str(row.get("特定樁號", ""))
+                mil_str = f"{r_name}{r_start}~{r_end}"
+                if str(r_spec) != "nan" and r_spec:
+                    mil_str += f"({r_spec})"
+            if mil_str not in ["nan", ""]: 
+                db_options.append(mil_str)
+            
+    sel_slope = st.selectbox("選擇既有邊坡帶入公文", db_options) if db_options else None
     
     st.markdown("---")
     st.header("🎛 標註樣式與 AI 參數")
     
     color_options = {"工程紅 (#FF0000)": "#FF0000", "青藍 (#00E5FF)": "#00E5FF", "警戒黃 (#FFD600)": "#FFD600", "高對比綠 (#00E676)": "#00E676"}
     stroke_color = color_options[st.selectbox("線條顏色", list(color_options.keys()), index=0)]
-    
     line_style_map = {"虛線": "dashed", "實線": "solid", "中心線": "centerline", "點線": "dotted"}
     active_line_style = line_style_map[st.selectbox("線條種類", list(line_style_map.keys()), index=0)]
     active_stroke_width = st.slider("粗細 (px)", 1, 12, 4)
-    
     sensitivity = st.slider("辨識敏感度 (%)", 10, 100, 50, 5)
     min_area = st.slider("雜訊過濾閥值 (%)", 0.05, 2.0, 0.2, 0.05)
 
@@ -402,29 +610,22 @@ st.markdown("""
 <div class="app-subtitle">公路邊坡分級管理系統 ｜ 邊坡滾動分級表與 CAD/Word/Excel 匯出版</div>
 """, unsafe_allow_html=True)
 
-tab_cv, tab_audit = st.tabs(["影像辨識與滾動報表", "A級降等合規審查"])
+tab_cv, tab_audit, tab_control = st.tabs(["影像辨識與滾動報表", "A級降等合規審查", "總台帳與管制位置表"])
 
 with tab_cv:
-    # 雙時序照片上傳區 (滾動前/後)
     c_up1, c_up2 = st.columns(2)
-    with c_up1:
-        file_before = st.file_uploader("📸 上傳『邊坡滾動前』照片", type=["jpg", "jpeg", "png"])
-    with c_up2:
-        file_after = st.file_uploader("📸 上傳『邊坡滾動後』照片 (進行 AI 辨識)", type=["jpg", "jpeg", "png"])
+    with c_up1: file_before = st.file_uploader("📸 上傳『邊坡滾動前』照片", type=["jpg", "jpeg", "png"])
+    with c_up2: file_after = st.file_uploader("📸 上傳『邊坡滾動後』照片 (進行 AI 辨識)", type=["jpg", "jpeg", "png"])
 
-    img_before_cv = None
-    img_after_cv = None
-    annotated_bgr = None
+    img_before_cv, img_after_cv, annotated_bgr = None, None, None
     metrics = {"veg": "0.00 %", "scar": "0.00 %", "color": "#00E676", "status": "NORMAL"}
-    w_orig, h_orig = 1920, 1080 # 預設解析度
+    w_orig, h_orig = 1920, 1080 
 
     if file_before:
-        file_bytes = np.asarray(bytearray(file_before.read()), dtype=np.uint8)
-        img_before_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        img_before_cv = cv2.imdecode(np.asarray(bytearray(file_before.read()), dtype=np.uint8), cv2.IMREAD_COLOR)
 
     if file_after:
-        file_bytes = np.asarray(bytearray(file_after.read()), dtype=np.uint8)
-        img_after_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        img_after_cv = cv2.imdecode(np.asarray(bytearray(file_after.read()), dtype=np.uint8), cv2.IMREAD_COLOR)
         h_orig, w_orig = img_after_cv.shape[:2]
 
         polys_detected, metrics = SlopeVisionEngine.analyze(
@@ -457,11 +658,8 @@ with tab_cv:
         """
         st.markdown(metrics_html, unsafe_allow_html=True)
 
-        annotated_bgr = SlopeVisionEngine.render_polygons(
-            img_after_cv, st.session_state.user_polys, color_hex=stroke_color, line_style=active_line_style, thickness=active_stroke_width
-        )
+        annotated_bgr = SlopeVisionEngine.render_polygons(img_after_cv, st.session_state.user_polys, color_hex=stroke_color, line_style=active_line_style, thickness=active_stroke_width)
         
-        # 互動畫布編輯器
         target_display_w = 1280
         aspect_ratio = float(h_orig) / float(w_orig)
         resized_for_web = cv2.resize(img_after_cv, (target_display_w, int(target_display_w * aspect_ratio)), interpolation=cv2.INTER_AREA)
@@ -475,13 +673,11 @@ with tab_cv:
             with open(html_template_path, "r", encoding="utf-8") as f:
                 html_content = f.read().replace("__IMG_ORIG_W__", str(w_orig)).replace("__IMG_ORIG_H__", str(h_orig))
                 html_content = html_content.replace("__STROKE_COLOR__", stroke_color).replace("__LINE_STYLE__", active_line_style)
-                html_content = html_content.replace("__STROKE_WIDTH__", str(active_stroke_width))
-                html_content = html_content.replace("__IMG_B64__", img_b64).replace("__POLYS_DATA__", json.dumps(polys_js))
+                html_content = html_content.replace("__STROKE_WIDTH__", str(active_stroke_width)).replace("__IMG_B64__", img_b64).replace("__POLYS_DATA__", json.dumps(polys_js))
             components.html(html_content, height=730)
 
         c_in1, c_in2 = st.columns([3, 1])
-        with c_in1:
-            json_input = st.text_input("貼上圖面最新頂點坐標資料 (JSON)", placeholder="點擊上方『📋 複製最新編輯成果』後貼於此處...", label_visibility="collapsed")
+        with c_in1: json_input = st.text_input("貼上圖面最新頂點坐標資料 (JSON)", placeholder="點擊上方『📋 複製最新編輯成果』後貼於此處...", label_visibility="collapsed")
         with c_in2:
             if st.button("套用並更新圖檔與台帳", type="primary", use_container_width=True):
                 if json_input:
@@ -489,65 +685,109 @@ with tab_cv:
                         st.session_state.user_polys = [np.array(p, dtype=np.int32) for p in json.loads(json_input)]
                         st.success("已成功同步編輯成果！")
                         st.rerun()
-                    except Exception:
-                        st.error("JSON 格式不符！")
+                    except Exception: st.error("JSON 格式不符！")
 
     st.markdown("---")
 
     # =====================================================================
-    # 報表資料填寫區 (若有上傳台帳，嘗試自動帶入)
+    # 報表資料填寫區
     # =====================================================================
-    st.subheader("📑 滾動分級表資料填寫與匯出")
+    st.subheader("📑 滾動分級表資料填寫與自動更新 Raw Data")
+    d_route, d_start, d_end, d_spec, d_orig_lvl, d_dir = "", "", "", "", "A", "順樁"
+    today_str = datetime.now().strftime("%Y/%m/%d")
     
-    # 初始化預設值
-    d_route, d_start, d_end, d_spec, d_orig_lvl = "台9丁線", "2k+700", "4k+600", "2k+700", "A級邊坡"
-    
-    if df_db is not None and sel_slope:
+    row_idx = None
+    if not st.session_state.df_db.empty and sel_slope:
         try:
-            # 解析選擇的 Row Index
-            row_idx = int(sel_slope.split("Row ")[1].replace(")", ""))
-            row_data = df_db.iloc[row_idx]
-            d_route = str(row_data.get("路線", d_route))
-            d_start = str(row_data.get("起點里程", d_start))
-            d_end = str(row_data.get("迄點里程", d_end))
-            d_orig_lvl = str(row_data.get("原有分級", d_orig_lvl))
-        except:
-            pass
+            row_idx = db_options.index(sel_slope)
+            row_data = st.session_state.df_db.iloc[row_idx]
+            
+            if "里程樁" in row_data and pd.notna(row_data["里程樁"]):
+                d_start = str(row_data["里程樁"]).replace("*", "")
+                d_route = d_start.split("K")[0] if "K" in d_start else "台9丁線" 
+            else:
+                d_route = str(row_data.get("路線", ""))
+                d_start = str(row_data.get("里程樁號(起)", ""))
+                d_end = str(row_data.get("里程樁號(迄)", ""))
+                d_spec = str(row_data.get("特定樁號", ""))
+                
+            d_dir = str(row_data.get("順/逆樁", row_data.get("方向", "順樁")))
+            lvl_col = "定性分級" if "定性分級" in st.session_state.df_db.columns else "分級"
+            d_orig_lvl = str(row_data.get(lvl_col, "A"))
+        except: pass
+
+    if d_spec == "nan": d_spec = ""
+    if "順" in d_dir: dir_index = 0
+    elif "逆" in d_dir: dir_index = 1
+    else: dir_index = 0
 
     cr1, cr2, cr3, cr4 = st.columns(4)
     with cr1: in_route = st.text_input("路線名稱", value=d_route)
-    with cr2: in_start = st.text_input("起點樁號", value=d_start)
-    with cr3: in_end = st.text_input("迄點樁號", value=d_end)
-    with cr4: in_spec = st.text_input("災害發生點 (特定樁號)", value=d_spec)
+    with cr2: in_start = st.text_input("起點樁/完整里程樁", value=d_start)
+    with cr3: in_end = st.text_input("迄點樁號 (若上格已完整可留空)", value=d_end)
+    with cr4: in_spec = st.text_input("特定樁號 (可留空)", value=d_spec)
 
     cr5, cr6, cr7, cr8 = st.columns(4)
-    with cr5: in_dir = st.selectbox("里程方向", ["順樁", "逆樁"])
-    with cr6: in_orig_level = st.text_input("原有分級", value=d_orig_lvl)
-    with cr7: in_new_level = st.selectbox("調整後等級", ["A級邊坡", "B級邊坡", "C+級邊坡", "C級邊坡", "D級邊坡"])
+    with cr5: in_dir = st.selectbox("里程方向", ["順樁", "逆樁"], index=dir_index)
+    with cr6: in_orig_level = st.text_input("原有定性分級", value=f"{d_orig_lvl.replace('級邊坡', '')}級邊坡")
+    with cr7: in_new_level = st.selectbox("調整後等級", ["A級邊坡", "B級邊坡", "C+級邊坡", "C級邊坡", "D級邊坡"], index=1)
     with cr8: in_cost = st.text_input("災害所需經費", value="初估 285,000 元")
+    
+    cr9, cr10 = st.columns(2)
+    with cr9: in_date = st.text_input("發生日期", value=today_str)
+    with cr10: in_fix_date = st.text_input("預計調降日期", value=today_str)
 
-    in_overview = st.text_area("現況概述", value="113年10月31日康芮颱風豪大雨影響，台9丁線2k+700上邊坡坡面表土及岩層遇水軟化產生坡面沖蝕，導致植被及表土流失形成大面積坡面裸露。")
+    in_overview = st.text_area("現況概述", value="受強降雨影響，邊坡表土及岩層遇水軟化產生坡面沖蝕，導致植被及表土流失形成大面積坡面裸露。")
     in_suggest = st.text_area("擬改善情形", value="上邊坡搶修 (型框植生)")
-    in_memo = st.text_area("備註", value="113年12月5日完工，上邊坡搶災(型框植生) [災害編號:114-04-B01]。")
+    in_memo = st.text_area("備註", value="上邊坡搶災。")
 
-    cb1, cb2 = st.columns(2)
+    cb1, cb2, cb3 = st.columns(3)
     with cb1:
-        # 將 img_before 與 annotated_bgr (或 img_after) 傳入 Excel 產生器
         export_after = annotated_bgr if annotated_bgr is not None else img_after_cv
         excel_data = SlopeReportGenerator.build_excel(
             img_before_cv, export_after, metrics, st.session_state.get("user_polys", []), 
             w_orig, h_orig, in_route, in_start, in_end, in_spec, in_dir, 
             in_orig_level, in_new_level, in_cost, in_overview, in_suggest, in_memo
         )
-        st.download_button("📊 匯出對齊版 Excel 滾動分級表", excel_data, f"Slope_{in_route}_{in_spec}.xlsx", use_container_width=True)
+        st.download_button("📊 匯出單筆滾動報表 (Excel)", excel_data, f"Slope_{in_route}_{in_start[:5]}.xlsx", use_container_width=True)
         
     with cb2:
-        if "user_polys" in st.session_state:
-            st.download_button("📐 匯出 CAD 向量框線", SlopeReportGenerator.build_cad_dxf(st.session_state.user_polys, w_orig, h_orig, in_route, in_spec, active_line_style), f"Slope_{in_route}_{in_spec}.dxf", use_container_width=True)
+        if st.button("🔄 將滾動分級與日期寫入記憶體 Raw Data", use_container_width=True):
+            if row_idx is not None and not st.session_state.df_db.empty:
+                lvl_col = "定性分級" if "定性分級" in st.session_state.df_db.columns else "分級"
+                st.session_state.df_db.at[row_idx, lvl_col] = in_new_level.replace("級邊坡", "")
+                st.session_state.df_db.at[row_idx, "發生日期"] = in_date
+                st.session_state.df_db.at[row_idx, "預計調降日期"] = in_fix_date
+                
+                if "里程樁" in st.session_state.df_db.columns:
+                    full_mil = str(st.session_state.df_db.at[row_idx, "里程樁"]).replace("*", "")
+                else:
+                    full_mil = f"{in_route}{in_start}~{in_end}"
+                    if in_spec: full_mil += f"({in_spec})"
+                    
+                if full_mil not in st.session_state.active_mileages:
+                    st.session_state.active_mileages.append(full_mil)
+                    
+                st.success(f"✅ 已成功將 {full_mil} 從 {d_orig_lvl} 級更新至 {in_new_level}！系統已自動將其搬移分類，請至「總台帳與管制位置表」匯出最新版範本。")
+            else:
+                st.error("請先於左側邊欄選擇欲滾動更新的既有邊坡！")
 
 with tab_audit:
     st.info("規範依據：東分局養字第1150004213號函。")
     if st.button("執行 115 年合規性檢核", type="primary", use_container_width=True):
         st.success("【審核通過】：各項法定要件均合規，准予由 A 級調降！")
+
+with tab_control:
+    st.subheader("📑 邊坡分級管制總表 (套用範本格式)")
+    if not st.session_state.df_db.empty:
+        st.caption("系統將讀取 `邊坡資料.xlsx` (Raw Data)，自動分群排序(A->B->C->D)並依據數字大小遞增，最後套用並填入 `蘇花公路邊坡分級管制樁號位置表（範本）xlsx.xlsx` 中！")
+        active_selections = st.multiselect("手動指定本次滾動的邊坡 (將自動標註 * 與橘色底色)：", db_options, default=st.session_state.active_mileages)
+        
+        if st.button("生成蘇花公路邊坡分級管制樁號位置表 (載入範本版型)", type="primary"):
+            master_excel = SlopeReportGenerator.build_master_control_table_via_template(st.session_state.df_db, active_selections)
+            if master_excel:
+                st.download_button("📥 下載最新管制總表.xlsx", master_excel, "蘇花公路邊坡分級管制樁號位置表_最新更新版.xlsx", use_container_width=True)
+    else:
+        st.warning("請先於左側邊欄匯入 `邊坡資料.xlsx`，確保目錄下有範本檔案。")
 
 st.markdown(f'<div class="fixed-footer">{logo_img_html}Powered by 公路局東區養護工程分局南澳工務段</div>', unsafe_allow_html=True)
