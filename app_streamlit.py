@@ -95,7 +95,7 @@ st.markdown("""
 
 
 # ==============================================================================
-# 邊坡分析核心引擎 (保留 Canny 邊緣檢測與強效防護版)
+# 邊坡分析核心引擎 (Canny 邊緣檢測與強效防護版)
 # ==============================================================================
 class SlopeVisionEngine:
     @staticmethod
@@ -207,31 +207,357 @@ class SlopeVisionEngine:
             cls.draw_styled_polygon(out, pts, color_bgr=color_bgr, thickness=thickness, line_style=line_style)
         return out
 
+
 # ==============================================================================
-# 多格式報表匯出引擎
+# 完整復原版：多格式報表匯出引擎 (保留全部 XML/樣式設定)
 # ==============================================================================
 class SlopeReportGenerator:
     @staticmethod
-    def build_excel(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig, route_name, stake_mileage, slope_dir, orig_level, new_level, overview_desc, suggest_desc):
+    def build_excel(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig,
+                    route_name, stake_mileage, slope_dir, orig_level, new_level,
+                    overview_desc, suggest_desc):
         output_excel = io.BytesIO()
         with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
-            export_rows, zone_summaries = [], []
+            export_rows = []
+            zone_summaries = []
             for z_i, p_pts in enumerate(polys, 1):
                 poly_area = cv2.contourArea(p_pts)
-                zone_summaries.append({"單元": f"Zone {z_i}", "面積(px)": int(poly_area), "比例(%)": round((poly_area / (w_orig * h_orig)) * 100, 3)})
-                for v_i, pt in enumerate(p_pts, 1): export_rows.append({"單元": f"Zone {z_i}", "序號": v_i, "X": int(pt[0]), "Y": int(pt[1])})
+                zone_summaries.append({
+                    "邊坡破壞單元編號": f"Zone {z_i}",
+                    "頂點數量": len(p_pts),
+                    "像素面積 (sq.px)": int(poly_area),
+                    "佔坡面面積比例 (%)": round((poly_area / (w_orig * h_orig)) * 100, 3)
+                })
+                for v_i, pt in enumerate(p_pts, 1):
+                    export_rows.append({
+                        "邊坡破壞單元編號": f"Zone {z_i}",
+                        "頂點序號": v_i,
+                        "像素坐標_X": int(pt[0]),
+                        "像素坐標_Y": int(pt[1]),
+                        "原圖寬度": w_orig,
+                        "原圖高度": h_orig
+                    })
 
-            pd.DataFrame(export_rows).to_excel(writer, index=False, sheet_name='節點坐標')
-            pd.DataFrame(zone_summaries).to_excel(writer, index=False, sheet_name='單元彙整')
-            ws = writer.book.create_sheet(title='分級表', index=0)
-            ws['A1'] = f"{route_name} {stake_mileage} 邊坡滾動分級表"
+            df_coords = pd.DataFrame(export_rows)
+            df_zones = pd.DataFrame(zone_summaries)
+            df_coords.to_excel(writer, index=False, sheet_name='邊坡破壞節點坐標')
+            df_zones.to_excel(writer, index=False, sheet_name='各單元面積彙整')
+
+            wb = writer.book
+            ws = wb.create_sheet(title='邊坡滾動分級表', index=0)
+
+            font_title = Font(name="標楷體", size=16, bold=True)
+            font_sub = Font(name="標楷體", size=14, bold=True)
+            font_header = Font(name="標楷體", size=11, bold=True)
+            font_content = Font(name="標楷體", size=11)
+            font_note = Font(name="標楷體", size=10, italic=True)
+
+            fill_header = PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid")
+            thin = Side(border_style="thin", color="000000")
+            border_cell = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+            col_widths = {'A': 16, 'B': 16, 'C': 16, 'D': 16, 'E': 16, 'F': 16, 'G': 16, 'H': 16}
+            for col, w in col_widths.items():
+                ws.column_dimensions[col].width = w
+
+            ws.merge_cells('A1:H1')
+            ws['A1'] = "交通部公路局東區養護工程分局"
+            ws['A1'].font = font_title
+            ws['A1'].alignment = Alignment(horizontal="center", vertical="center")
+
+            ws.merge_cells('A2:H2')
+            ws['A2'] = "邊坡滾動分級表"
+            ws['A2'].font = font_sub
+            ws['A2'].alignment = Alignment(horizontal="center", vertical="center")
+
+            ws['A3'] = "養護單位"
+            ws.merge_cells('B3:D3')
+            ws['B3'] = "交通部公路局東區養護工程分局南澳工務段"
+            ws['E3'] = "邊坡原有分級"
+            ws.merge_cells('F3:H3')
+            ws['F3'] = orig_level
+
+            ws['A4'] = "邊坡位置"
+            ws.merge_cells('B4:D4')
+            ws['B4'] = f"{route_name} ({slope_dir})"
+            ws['E4'] = "里 程"
+            ws.merge_cells('F4:H4')
+            ws['F4'] = stake_mileage
+
+            ws['A5'] = "災害所需經費"
+            ws.merge_cells('B5:D5')
+            ws['B5'] = "列入年度養護/復建工程辦理"
+            ws['E5'] = "邊坡等級調整"
+            ws.merge_cells('F5:H5')
+            ws['F5'] = f"{orig_level}  →  {new_level}"
+
+            ws['A6'] = "現況概述"
+            ws.merge_cells('B6:H6')
+            ws['B6'] = f"{overview_desc} (AI 自動辨識崩塌裸露比例約 {metrics['scar']}，破壞單元共 {len(polys)} 處)"
+
+            ws['A7'] = "擬改善情形"
+            ws.merge_cells('B7:H7')
+            ws['B7'] = suggest_desc
+
+            ws.merge_cells('A8:D8')
+            ws['A8'] = "邊坡滾動前 (原始巡檢照片)"
+            ws.merge_cells('E8:H8')
+            ws['E8'] = "邊坡滾動後 (AI 破壞特徵標註成果圖)"
+
+            for r in range(9, 23):
+                ws.row_dimensions[r].height = 20
+
+            ws['A23'] = "備註"
+            ws.merge_cells('B23:H23')
+            ws['B23'] = "本巡檢評估成果由南澳工務段邊坡影像破壞辨識系統產製，經無人機原生解析度驗證與合規檢核。"
+
+            ws['A24'] = "工務段:"
+            ws.merge_cells('B24:D24')
+            ws['B24'] = "段長：____________"
+            ws['E24'] = "主管單位:"
+            ws.merge_cells('F24:H24')
+            ws['F24'] = "科長/分局長：____________"
+
+            ws.merge_cells('A25:H25')
+            ws['A25'] = "註：本報告表係用於邊坡調整適用之，1式3份報分局核定。"
+            ws['A25'].font = font_note
+            ws['A25'].alignment = Alignment(horizontal="left", vertical="center")
+
+            for r in range(3, 25):
+                for col_idx in range(1, 9):
+                    cell = ws.cell(row=r, column=col_idx)
+                    cell.border = border_cell
+                    if col_idx in [1, 5] and r in [3, 4, 5]:
+                        cell.fill = fill_header
+                        cell.font = font_header
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    elif col_idx == 1 and r in [6, 7, 23, 24]:
+                        cell.fill = fill_header
+                        cell.font = font_header
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    elif r in [3, 4, 5, 24] and col_idx in [5]:
+                        cell.fill = fill_header
+                        cell.font = font_header
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    elif r == 8:
+                        cell.fill = fill_header
+                        cell.font = font_header
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        cell.font = font_content
+                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+            try:
+                from openpyxl.drawing.image import Image as OpenpyxlImage
+                aspect_ratio = float(h_orig) / float(w_orig)
+                thumb_w = 540
+                thumb_h = int(thumb_w * aspect_ratio)
+
+                raw_thumb = cv2.resize(raw_img, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+                res_thumb = cv2.resize(annotated_bgr, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+
+                raw_buf = io.BytesIO(cv2.imencode('.png', raw_thumb)[1].tobytes())
+                res_buf = io.BytesIO(cv2.imencode('.png', res_thumb)[1].tobytes())
+
+                img_raw_obj = OpenpyxlImage(raw_buf)
+                img_res_obj = OpenpyxlImage(res_buf)
+
+                img_raw_obj.width = 460
+                img_raw_obj.height = int(460 * aspect_ratio)
+                img_res_obj.width = 460
+                img_res_obj.height = int(460 * aspect_ratio)
+
+                ws.add_image(img_raw_obj, "A9")
+                ws.add_image(img_res_obj, "E9")
+            except Exception:
+                pass
+
         return output_excel.getvalue()
 
     @staticmethod
-    def build_word(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig, route_name, stake_mileage, slope_dir, orig_level, new_level, cost_val, overview_desc, suggest_desc, memo_desc=""):
-        if not HAS_DOCX: return None
+    def build_word(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig,
+                   route_name, stake_mileage, slope_dir, orig_level, new_level,
+                   cost_val, overview_desc, suggest_desc, memo_desc=""):
+        if not HAS_DOCX:
+            return None
+
         doc = docx.Document()
-        doc.add_paragraph(f"{route_name} {stake_mileage} 邊坡滾動分級表")
+        section = doc.sections[0]
+        section.top_margin = Inches(0.787)
+        section.bottom_margin = Inches(0.787)
+        section.left_margin = Inches(0.787)
+        section.right_margin = Inches(0.787)
+
+        p_title = doc.add_paragraph()
+        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_title.paragraph_format.space_before = Pt(0)
+        p_title.paragraph_format.space_after = Pt(2)
+        p_title.paragraph_format.line_spacing = 1.15
+        
+        run_t1 = p_title.add_run("交通部公路局東區養護工程分局\n")
+        run_t1.font.name = "標楷體"
+        run_t1.font.size = Pt(16)
+        run_t1.font.bold = True
+        run_t1._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
+
+        run_t2 = p_title.add_run("邊坡滾動分級表")
+        run_t2.font.name = "標楷體"
+        run_t2.font.size = Pt(16)
+        run_t2.font.bold = True
+        run_t2._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
+
+        table = doc.add_table(rows=10, cols=8)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = False
+
+        col_w = [Inches(1.05), Inches(0.85), Inches(0.75), Inches(0.80),
+                 Inches(1.05), Inches(0.80), Inches(0.80), Inches(0.80)]
+        for row in table.rows:
+            for i, w in enumerate(col_w):
+                row.cells[i].width = w
+
+        def set_cell_props(cell, bg_color=None, align_h=WD_ALIGN_PARAGRAPH.CENTER):
+            tcPr = cell._tc.get_or_add_tcPr()
+            vAlign = parse_xml(r'<w:vAlign %s w:val="center"/>' % nsdecls('w'))
+            tcPr.append(vAlign)
+            if bg_color:
+                shd = parse_xml(r'<w:shd %s w:fill="%s"/>' % (nsdecls('w'), bg_color))
+                tcPr.append(shd)
+            borders = parse_xml(
+                r'<w:tcBorders %s>'
+                r'  <w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'  <w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'  <w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'  <w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'</w:tcBorders>' % nsdecls('w')
+            )
+            tcPr.append(borders)
+            p = cell.paragraphs[0]
+            p.alignment = align_h
+            p.paragraph_format.space_before = Pt(2)
+            p.paragraph_format.space_after = Pt(2)
+            p.paragraph_format.line_spacing = 1.0
+
+        def fill_cell(cell, text, bold=False, font_size=10, bg_color=None, align_h=WD_ALIGN_PARAGRAPH.CENTER):
+            set_cell_props(cell, bg_color, align_h)
+            p = cell.paragraphs[0]
+            p.text = ""
+            for line_idx, line in enumerate(text.split('\n')):
+                if line_idx > 0:
+                    p.add_run().add_break()
+                run = p.add_run(line)
+                run.font.name = "Times New Roman"
+                run.font.size = Pt(font_size)
+                run.font.bold = bold
+                run.font.color.rgb = RGBColor(0, 0, 0)
+                run._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
+
+        fill_cell(table.cell(0, 0), "養護單位", bold=True, bg_color="EDEDED")
+        c_m0 = table.cell(0, 1)
+        c_m0.merge(table.cell(0, 3))
+        fill_cell(c_m0, "交通部公路局東區養護工程分局南澳工務段", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        fill_cell(table.cell(0, 4), "邊坡\n原有分級", bold=True, bg_color="EDEDED")
+        c_m1 = table.cell(0, 5)
+        c_m1.merge(table.cell(0, 7))
+        box_a = "■" if "A" in orig_level else "□"
+        box_b = "■" if "B" in orig_level else "□"
+        box_c = "■" if "C" in orig_level else "□"
+        box_d = "■" if "D" in orig_level else "□"
+        box_none = "■" if "無" in orig_level else "□"
+        orig_boxes = f"{box_a}A級邊坡  {box_b}B級邊坡\n{box_c}C級邊坡  {box_d}D級邊坡\n{box_none}無"
+        fill_cell(c_m1, orig_boxes, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        fill_cell(table.cell(1, 0), "邊坡位置", bold=True, bg_color="EDEDED")
+        c_m2 = table.cell(1, 1)
+        c_m2.merge(table.cell(1, 3))
+        fill_cell(c_m2, f"{route_name} ({slope_dir})", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        fill_cell(table.cell(1, 4), "里 程", bold=True, bg_color="EDEDED")
+        c_m3 = table.cell(1, 5)
+        c_m3.merge(table.cell(1, 7))
+        box_shun = "■" if "順" in slope_dir else "□"
+        box_ni = "■" if "逆" in slope_dir else "□"
+        fill_cell(c_m3, f"{stake_mileage}    {box_shun}順樁    {box_ni}逆樁", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        fill_cell(table.cell(2, 0), "災害\n所需經費", bold=True, bg_color="EDEDED")
+        c_m4 = table.cell(2, 1)
+        c_m4.merge(table.cell(2, 3))
+        fill_cell(c_m4, f"{cost_val} 元", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        fill_cell(table.cell(2, 4), "邊坡\n等級調整", bold=True, bg_color="EDEDED")
+        c_m5 = table.cell(2, 5)
+        c_m5.merge(table.cell(2, 7))
+        fill_cell(c_m5, f"{orig_level}  →  {new_level}", font_size=11, bold=True, align_h=WD_ALIGN_PARAGRAPH.CENTER)
+
+        fill_cell(table.cell(3, 0), "現況概述", bold=True, bg_color="EDEDED")
+        c_m6 = table.cell(3, 1)
+        c_m6.merge(table.cell(3, 7))
+        overview_text = f"{overview_desc}\n(AI 判釋裸露崩塌比例約 {metrics['scar']}，異常單元 {len(polys)} 處)"
+        fill_cell(c_m6, overview_text, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        fill_cell(table.cell(4, 0), "擬改善情形", bold=True, bg_color="EDEDED")
+        c_m7 = table.cell(4, 1)
+        c_m7.merge(table.cell(4, 7))
+        fill_cell(c_m7, suggest_desc, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        c_m8 = table.cell(5, 0)
+        c_m8.merge(table.cell(5, 3))
+        fill_cell(c_m8, "邊坡滾動前 (原始巡檢照片)", bold=True, bg_color="EDEDED")
+
+        c_m9 = table.cell(5, 4)
+        c_m9.merge(table.cell(5, 7))
+        fill_cell(c_m9, "邊坡滾動後 (AI 破壞特徵標註成果圖)", bold=True, bg_color="EDEDED")
+
+        c_img_l = table.cell(6, 0)
+        c_img_l.merge(table.cell(6, 3))
+        set_cell_props(c_img_l, align_h=WD_ALIGN_PARAGRAPH.CENTER)
+
+        c_img_r = table.cell(6, 4)
+        c_img_r.merge(table.cell(6, 7))
+        set_cell_props(c_img_r, align_h=WD_ALIGN_PARAGRAPH.CENTER)
+
+        aspect_ratio = float(h_orig) / float(w_orig)
+        thumb_w = 720
+        thumb_h = int(thumb_w * aspect_ratio)
+
+        raw_thumb = cv2.resize(raw_img, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+        res_thumb = cv2.resize(annotated_bgr, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+
+        raw_tmp = io.BytesIO(cv2.imencode('.png', raw_thumb)[1].tobytes())
+        res_tmp = io.BytesIO(cv2.imencode('.png', res_thumb)[1].tobytes())
+
+        p_l = c_img_l.paragraphs[0]
+        p_l.text = ""
+        p_l.add_run().add_picture(raw_tmp, width=Inches(3.2))
+
+        p_r = c_img_r.paragraphs[0]
+        p_r.text = ""
+        p_r.add_run().add_picture(res_tmp, width=Inches(3.2))
+
+        fill_cell(table.cell(7, 0), "備註", bold=True, bg_color="EDEDED")
+        c_m10 = table.cell(7, 1)
+        c_m10.merge(table.cell(7, 7))
+        memo_content = memo_desc if memo_desc else "本巡檢評估成果由南澳工務段邊坡影像破壞辨識系統產製，經無人機原生解析度驗證與合規檢核。"
+        fill_cell(c_m10, memo_content, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        c_s1 = table.cell(8, 0)
+        c_s1.merge(table.cell(8, 2))
+        fill_cell(c_s1, "工務段:  段長：____________", font_size=10, bold=True, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        c_s2 = table.cell(8, 3)
+        c_s2.merge(table.cell(8, 7))
+        fill_cell(c_s2, "主管單位:  科長/分局長：____________", font_size=10, bold=True, align_h=WD_ALIGN_PARAGRAPH.LEFT)
+
+        p_bottom = doc.add_paragraph()
+        p_bottom.paragraph_format.space_before = Pt(4)
+        p_bottom.paragraph_format.space_after = Pt(0)
+        run_bottom = p_bottom.add_run("註：本報告表係用於邊坡調整適用之，1式3份報分局核定。")
+        run_bottom.font.name = "Times New Roman"
+        run_bottom.font.size = Pt(9)
+        run_bottom.font.italic = True
+        run_bottom._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
+
         out_docx = io.BytesIO()
         doc.save(out_docx)
         return out_docx.getvalue()
@@ -307,7 +633,6 @@ with tab_cv:
             st.session_state.user_polys = [p.copy() for p in polys_detected]
             st.session_state.last_file = uploaded_file.name
 
-        # 輸出 2x2 CSS Grid 數據儀表板
         metrics_html = f"""
         <div class="metrics-wrapper">
             <div class="metric-card" style="border-left-color: #00E5FF;">
@@ -345,7 +670,7 @@ with tab_cv:
         st.markdown("---")
 
         # =====================================================================
-        # 恢復：物件導向圖面直接編輯器 (HTML Canvas)
+        # 互動畫布編輯器 (HTML Canvas)
         # =====================================================================
         st.subheader("🖱️ 物件導向圖面直接編輯器 (含回復上一步驟與手動新增)")
         st.caption("【操作指引】：\n"
@@ -366,7 +691,6 @@ with tab_cv:
             pts = [[float(pt[0]), float(pt[1])] for pt in p]
             polys_js.append(pts)
 
-        # 讀取外部 HTML 模板，傳入參數
         html_template_path = "canvas_editor.html"
         if os.path.exists(html_template_path):
             with open(html_template_path, "r", encoding="utf-8") as f:
@@ -382,7 +706,6 @@ with tab_cv:
         else:
             st.error("找不到 canvas_editor.html 檔案，請確認已將該檔案放置於同一個目錄中。")
 
-        # 恢復：JSON 資料套用區塊
         c_in1, c_in2 = st.columns([3, 1])
         with c_in1:
             json_input = st.text_input("貼上圖面最新頂點坐標資料 (JSON)", placeholder="點擊上方『📋 複製最新編輯成果』後貼於此處...", label_visibility="collapsed")
@@ -400,7 +723,7 @@ with tab_cv:
         st.markdown("---")
 
         # =====================================================================
-        # 報表匯出區塊
+        # 報表匯出區塊 (100% 恢復原先精細的公文排版)
         # =====================================================================
         st.subheader("📑 報表與向量檔匯出")
         cr1, cr2, cr3 = st.columns(3)
