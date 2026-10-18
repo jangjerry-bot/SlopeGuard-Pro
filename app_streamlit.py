@@ -51,20 +51,20 @@ for potential_path in ["LOGO.webp", "logo.webp", "LOGO.png", "logo.png"]:
 logo_img_html = f'<img src="data:image/webp;base64,{logo_b64}" style="height:18px; vertical-align:middle; margin-right:6px;" />' if logo_b64 else ""
 
 # ==============================================================================
-# 行動端 UI 深度優化 CSS (Mobile-Optimized CSS)
+# 行動端 UI 深度優化 CSS (自動適應深/淺色模式)
 # ==============================================================================
 st.markdown("""
 <style>
-    /* 1. 壓縮全域留白與隱藏無用元素 */
+    /* 壓縮全域留白與隱藏無用元素 */
     .block-container { padding-top: 1.2rem !important; padding-bottom: 3.5rem !important; }
     header { visibility: hidden; }
     footer { visibility: hidden; }
     
-    /* 2. 緊湊型標題設計 (RWD) */
-    .app-title { font-size: 22px; font-weight: 900; margin-bottom: 4px; color: #F8FAFC; line-height: 1.2; }
-    .app-subtitle { font-size: 12px; color: #94A3B8; margin-bottom: 12px; letter-spacing: 0.5px; }
+    /* 緊湊型標題設計 (RWD)，使用 var(--text-color) 適應深淺色主題 */
+    .app-title { font-size: 22px; font-weight: 900; margin-bottom: 4px; color: var(--text-color); line-height: 1.2; }
+    .app-subtitle { font-size: 12px; color: gray; margin-bottom: 12px; letter-spacing: 0.5px; }
     
-    /* 3. 響應式 2x2 數據卡片網格 */
+    /* 響應式 2x2 數據卡片網格 */
     .metrics-wrapper {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
@@ -78,23 +78,24 @@ st.markdown("""
     }
     
     .metric-card {
-        background-color: #1E293B; border: 1px solid #334155;
+        background-color: var(--secondary-background-color); 
+        border: 1px solid var(--border-color);
         padding: 8px 10px; border-radius: 6px; border-left: 4px solid #00E5FF;
         display: flex; flex-direction: column; justify-content: center;
     }
-    .metric-title { color: #94A3B8; font-size: 11px; font-weight: bold; margin-bottom: 2px; }
-    .metric-val { color: #F8FAFC; font-size: 16px; font-weight: 800; font-family: monospace; line-height: 1.2; }
+    .metric-title { color: var(--text-color); font-size: 11px; font-weight: bold; margin-bottom: 2px; opacity: 0.8; }
+    .metric-val { color: var(--text-color); font-size: 16px; font-weight: 800; font-family: monospace; line-height: 1.2; }
     
-    /* 4. 底部固定署名欄 */
+    /* 底部固定署名欄 */
     .fixed-footer {
         position: fixed; left: 0; bottom: 0; width: 100%;
-        background-color: #0F172A; color: #38BDF8; text-align: center;
+        background-color: var(--secondary-background-color); color: var(--text-color); text-align: center;
         padding: 6px 0; font-size: 11px; font-weight: bold;
-        border-top: 1px solid #1E293B; z-index: 99999;
+        border-top: 1px solid var(--border-color); z-index: 99999;
         display: flex; justify-content: center; align-items: center;
     }
     
-    /* 5. 壓縮上傳區塊與 Tab 頁籤 */
+    /* 壓縮上傳區塊與 Tab 頁籤 */
     .stFileUploader > div { padding: 0 !important; }
     button[data-baseweb="tab"] { font-size: 13px !important; padding: 6px 12px !important; }
 </style>
@@ -102,7 +103,7 @@ st.markdown("""
 
 
 # ==============================================================================
-# 邊坡分析核心引擎 (升級版)
+# 邊坡分析核心引擎
 # ==============================================================================
 class SlopeVisionEngine:
     @staticmethod
@@ -258,99 +259,4 @@ class SlopeReportGenerator:
 with st.sidebar:
     st.header("🎛 邊坡控制台")
     st.subheader("輪廓標註樣式自訂")
-    color_options = {"工程紅 (#FF0000)": "#FF0000", "青藍 (#00E5FF)": "#00E5FF", "警戒黃 (#FFD600)": "#FFD600", "高對比綠 (#00E676)": "#00E676", "純白 (#FFFFFF)": "#FFFFFF"}
-    stroke_color = color_options[st.selectbox("線條顏色", list(color_options.keys()), index=0)]
-    active_line_style = {"虛線": "dashed", "實線": "solid", "中心線": "centerline", "點線": "dotted"}[st.selectbox("線條種類", ["虛線", "實線", "中心線", "點線"], index=0)]
-    active_stroke_width = st.slider("粗細 (px)", 1, 12, 4)
-    st.markdown("---")
-    suppress_road = st.checkbox("智慧避開底部道路", value=False)
-    road_dilate = st.slider("底部道路遮蔽強度", 1, 6, 2)
-    sensitivity = st.slider("辨識敏感度 (%)", 10, 100, 50, 5)
-    min_area = st.slider("雜訊過濾閥值 (%)", 0.05, 2.0, 0.2, 0.05)
-    manual_y = st.slider("高程區間 (%)", 0, 100, (0, 100))
-    manual_x = st.slider("橫向區間 (%)", 0, 100, (0, 100))
-
-
-# ==============================================================================
-# 主頁面 UI (極簡響應式設計)
-# ==============================================================================
-st.markdown("""
-<div class="app-title">⛰️ SLOPEGUARD PRO</div>
-<div class="app-subtitle">公路邊坡分級管理系統 ｜ 邊坡滾動分級表與 CAD/Word/Excel 匯出版</div>
-""", unsafe_allow_html=True)
-
-tab_cv, tab_audit = st.tabs(["影像辨識與編輯", "A級降等合規審查"])
-
-with tab_cv:
-    uploaded_file = st.file_uploader("匯入巡查或空拍照片 (JPG/PNG)", type=["jpg", "jpeg", "png"])
-
-    if uploaded_file is not None:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        raw_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        h_orig, w_orig = raw_img.shape[:2]
-
-        polys_detected, metrics = SlopeVisionEngine.analyze(
-            raw_img, sensitivity, min_area, suppress_road, road_dilate, manual_y, manual_x
-        )
-
-        if "user_polys" not in st.session_state or st.session_state.get("last_file") != uploaded_file.name:
-            st.session_state.user_polys = [p.copy() for p in polys_detected]
-            st.session_state.last_file = uploaded_file.name
-
-        # 輸出 2x2 CSS Grid 數據儀表板
-        metrics_html = f"""
-        <div class="metrics-wrapper">
-            <div class="metric-card" style="border-left-color: #00E5FF;">
-                <div class="metric-title">植生覆蓋比例</div>
-                <div class="metric-val">{metrics['veg']}</div>
-            </div>
-            <div class="metric-card" style="border-left-color: #FFB300;">
-                <div class="metric-title">裸露崩塌比例</div>
-                <div class="metric-val">{metrics['scar']}</div>
-            </div>
-            <div class="metric-card" style="border-left-color: #FF5252;">
-                <div class="metric-title">標註破壞單元</div>
-                <div class="metric-val">{len(st.session_state.user_polys)} 處</div>
-            </div>
-            <div class="metric-card" style="border-left-color: {metrics['color']};">
-                <div class="metric-title">初判危害等級</div>
-                <div class="metric-val" style="color: {metrics['color']}; font-size: 14px;">{metrics['status'].split(' ')[0]}</div>
-            </div>
-        </div>
-        """
-        st.markdown(metrics_html, unsafe_allow_html=True)
-
-        annotated_bgr = SlopeVisionEngine.render_polygons(
-            raw_img, st.session_state.user_polys, color_hex=stroke_color, line_style=active_line_style, thickness=active_stroke_width
-        )
-        
-        c_l, c_r = st.columns(2)
-        with c_l:
-            st.caption("原始照片")
-            st.image(cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-        with c_r:
-            st.caption("AI 標註結果")
-            st.image(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
-
-        # 簡化導出區域
-        st.subheader("📑 報表與向量檔匯出")
-        cr1, cr2, cr3 = st.columns(3)
-        with cr1: in_route = st.text_input("路線", value="台9丁線")
-        with cr2: in_stake = st.text_input("樁號", value="2k+700")
-        with cr3: in_new_level = st.selectbox("調整後等級", ["A級", "B級", "C+級", "C級", "D級"])
-
-        cb1, cb2, cb3 = st.columns(3)
-        with cb1:
-            st.download_button("📊 匯出 Excel", SlopeReportGenerator.build_excel(raw_img, annotated_bgr, metrics, st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, "上邊坡", "B級", in_new_level, "", ""), f"Slope_{in_route}_{in_stake}.xlsx", use_container_width=True)
-        with cb2:
-            if word_bytes := SlopeReportGenerator.build_word(raw_img, annotated_bgr, metrics, st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, "上邊坡", "B級", in_new_level, "", ""):
-                st.download_button("📄 匯出 Word", word_bytes, f"Slope_{in_route}_{in_stake}.docx", use_container_width=True)
-        with cb3:
-            st.download_button("📐 匯出 CAD", SlopeReportGenerator.build_cad_dxf(st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, active_line_style), f"Slope_{in_route}_{in_stake}.dxf", use_container_width=True)
-
-with tab_audit:
-    st.info("規範依據：東分局養字第1150004213號函。")
-    if st.button("執行 115 年合規性檢核", type="primary", use_container_width=True):
-        st.success("【審核通過】：各項法定要件均合規，准予由 A 級調降！")
-
-st.markdown(f'<div class="fixed-footer">{logo_img_html}Powered by 公路局東區養護工程分局南澳工務段</div>', unsafe_allow_html=True)
+    color_options = {"工程紅 (#FF0000)": "#FF0000", "青藍 (#00E5FF)": "#00E5FF", "警戒黃 (#FF
