@@ -51,7 +51,7 @@ for potential_path in ["LOGO.webp", "logo.webp", "LOGO.png", "logo.png"]:
 logo_img_html = f'<img src="data:image/webp;base64,{logo_b64}" style="height:18px; vertical-align:middle; margin-right:6px;" />' if logo_b64 else ""
 
 # ==============================================================================
-# CSS 響應式佈局 (保留 2x2 網格與自適應色彩)
+# CSS 響應式佈局
 # ==============================================================================
 st.markdown("""
 <style>
@@ -209,39 +209,21 @@ class SlopeVisionEngine:
 
 
 # ==============================================================================
-# 完整復原版：多格式報表匯出引擎 (保留全部 XML/樣式設定)
+# 報表匯出引擎 (完美對齊滾動前/後影像)
 # ==============================================================================
 class SlopeReportGenerator:
     @staticmethod
-    def build_excel(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig,
-                    route_name, stake_mileage, slope_dir, orig_level, new_level,
-                    overview_desc, suggest_desc):
+    def build_excel(img_before, img_after, metrics, polys, w_orig, h_orig,
+                    route_name, start_mil, end_mil, spec_mil, slope_dir, orig_level, new_level,
+                    cost_val, overview_desc, suggest_desc, memo_desc):
         output_excel = io.BytesIO()
         with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
             export_rows = []
-            zone_summaries = []
             for z_i, p_pts in enumerate(polys, 1):
-                poly_area = cv2.contourArea(p_pts)
-                zone_summaries.append({
-                    "邊坡破壞單元編號": f"Zone {z_i}",
-                    "頂點數量": len(p_pts),
-                    "像素面積 (sq.px)": int(poly_area),
-                    "佔坡面面積比例 (%)": round((poly_area / (w_orig * h_orig)) * 100, 3)
-                })
                 for v_i, pt in enumerate(p_pts, 1):
-                    export_rows.append({
-                        "邊坡破壞單元編號": f"Zone {z_i}",
-                        "頂點序號": v_i,
-                        "像素坐標_X": int(pt[0]),
-                        "像素坐標_Y": int(pt[1]),
-                        "原圖寬度": w_orig,
-                        "原圖高度": h_orig
-                    })
+                    export_rows.append({"單元": f"Zone {z_i}", "序號": v_i, "X": int(pt[0]), "Y": int(pt[1])})
 
-            df_coords = pd.DataFrame(export_rows)
-            df_zones = pd.DataFrame(zone_summaries)
-            df_coords.to_excel(writer, index=False, sheet_name='邊坡破壞節點坐標')
-            df_zones.to_excel(writer, index=False, sheet_name='各單元面積彙整')
+            pd.DataFrame(export_rows).to_excel(writer, index=False, sheet_name='節點坐標')
 
             wb = writer.book
             ws = wb.create_sheet(title='邊坡滾動分級表', index=0)
@@ -256,7 +238,7 @@ class SlopeReportGenerator:
             thin = Side(border_style="thin", color="000000")
             border_cell = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-            col_widths = {'A': 16, 'B': 16, 'C': 16, 'D': 16, 'E': 16, 'F': 16, 'G': 16, 'H': 16}
+            col_widths = {'A': 15, 'B': 17, 'C': 17, 'D': 17, 'E': 15, 'F': 17, 'G': 17, 'H': 17}
             for col, w in col_widths.items():
                 ws.column_dimensions[col].width = w
 
@@ -272,51 +254,53 @@ class SlopeReportGenerator:
 
             ws['A3'] = "養護單位"
             ws.merge_cells('B3:D3')
-            ws['B3'] = "交通部公路局東區養護工程分局南澳工務段"
-            ws['E3'] = "邊坡原有分級"
+            ws['B3'] = "東區養護工程分局南澳工務段"
+            ws['E3'] = "邊坡\n原有分級"
             ws.merge_cells('F3:H3')
             ws['F3'] = orig_level
 
             ws['A4'] = "邊坡位置"
             ws.merge_cells('B4:D4')
-            ws['B4'] = f"{route_name} ({slope_dir})"
+            ws['B4'] = f"{route_name}{start_mil}~{end_mil}\n({route_name}{spec_mil})"
             ws['E4'] = "里 程"
             ws.merge_cells('F4:H4')
-            ws['F4'] = stake_mileage
+            box_shun = "■" if "順" in slope_dir else "□"
+            box_ni = "■" if "逆" in slope_dir else "□"
+            ws['F4'] = f"{box_shun}順樁        {box_ni}逆樁"
 
             ws['A5'] = "災害所需經費"
             ws.merge_cells('B5:D5')
-            ws['B5'] = "列入年度養護/復建工程辦理"
-            ws['E5'] = "邊坡等級調整"
+            ws['B5'] = cost_val
+            ws['E5'] = "邊坡等級調\n整"
             ws.merge_cells('F5:H5')
-            ws['F5'] = f"{orig_level}  →  {new_level}"
+            ws['F5'] = f"{orig_level}    →    {new_level}"
 
             ws['A6'] = "現況概述"
             ws.merge_cells('B6:H6')
-            ws['B6'] = f"{overview_desc} (AI 自動辨識崩塌裸露比例約 {metrics['scar']}，破壞單元共 {len(polys)} 處)"
+            ws['B6'] = overview_desc
 
             ws['A7'] = "擬改善情形"
             ws.merge_cells('B7:H7')
             ws['B7'] = suggest_desc
 
             ws.merge_cells('A8:D8')
-            ws['A8'] = "邊坡滾動前 (原始巡檢照片)"
+            ws['A8'] = "邊坡滾動前"
             ws.merge_cells('E8:H8')
-            ws['E8'] = "邊坡滾動後 (AI 破壞特徵標註成果圖)"
+            ws['E8'] = "邊坡滾動後"
 
+            # 預留圖片空間
             for r in range(9, 23):
-                ws.row_dimensions[r].height = 20
+                ws.row_dimensions[r].height = 22
 
-            ws['A23'] = "備註"
+            ws['A23'] = "備 註"
             ws.merge_cells('B23:H23')
-            ws['B23'] = "本巡檢評估成果由南澳工務段邊坡影像破壞辨識系統產製，經無人機原生解析度驗證與合規檢核。"
+            ws['B23'] = memo_desc
 
-            ws['A24'] = "工務段:"
-            ws.merge_cells('B24:D24')
-            ws['B24'] = "段長：____________"
-            ws['E24'] = "主管單位:"
-            ws.merge_cells('F24:H24')
-            ws['F24'] = "科長/分局長：____________"
+            ws.merge_cells('A24:D24')
+            ws['A24'] = "工務段：\n\n聘用高級工程師 張仁瀚"
+            ws.merge_cells('E24:H24')
+            ws['E24'] = "主管單位：\n\n段長 劉錦龍"
+            ws.row_dimensions[24].height = 45
 
             ws.merge_cells('A25:H25')
             ws['A25'] = "註：本報告表係用於邊坡調整適用之，1式3份報分局核定。"
@@ -327,18 +311,10 @@ class SlopeReportGenerator:
                 for col_idx in range(1, 9):
                     cell = ws.cell(row=r, column=col_idx)
                     cell.border = border_cell
-                    if col_idx in [1, 5] and r in [3, 4, 5]:
+                    if col_idx in [1, 5] and r in [3, 4, 5, 6, 7, 23]:
                         cell.fill = fill_header
                         cell.font = font_header
-                        cell.alignment = Alignment(horizontal="center", vertical="center")
-                    elif col_idx == 1 and r in [6, 7, 23, 24]:
-                        cell.fill = fill_header
-                        cell.font = font_header
-                        cell.alignment = Alignment(horizontal="center", vertical="center")
-                    elif r in [3, 4, 5, 24] and col_idx in [5]:
-                        cell.fill = fill_header
-                        cell.font = font_header
-                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                     elif r == 8:
                         cell.fill = fill_header
                         cell.font = font_header
@@ -347,220 +323,28 @@ class SlopeReportGenerator:
                         cell.font = font_content
                         cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
+            # 強制統一調整滾動前、後圖片尺寸 (對齊排版)
             try:
                 from openpyxl.drawing.image import Image as OpenpyxlImage
-                aspect_ratio = float(h_orig) / float(w_orig)
-                thumb_w = 540
-                thumb_h = int(thumb_w * aspect_ratio)
-
-                raw_thumb = cv2.resize(raw_img, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
-                res_thumb = cv2.resize(annotated_bgr, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
-
-                raw_buf = io.BytesIO(cv2.imencode('.png', raw_thumb)[1].tobytes())
-                res_buf = io.BytesIO(cv2.imencode('.png', res_thumb)[1].tobytes())
-
-                img_raw_obj = OpenpyxlImage(raw_buf)
-                img_res_obj = OpenpyxlImage(res_buf)
-
-                img_raw_obj.width = 460
-                img_raw_obj.height = int(460 * aspect_ratio)
-                img_res_obj.width = 460
-                img_res_obj.height = int(460 * aspect_ratio)
-
-                ws.add_image(img_raw_obj, "A9")
-                ws.add_image(img_res_obj, "E9")
-            except Exception:
-                pass
+                target_w, target_h = 420, 315 
+                
+                if img_before is not None:
+                    img_b_resized = cv2.resize(img_before, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                    buf_b = io.BytesIO(cv2.imencode('.png', img_b_resized)[1].tobytes())
+                    oxl_img_b = OpenpyxlImage(buf_b)
+                    oxl_img_b.width, oxl_img_b.height = target_w, target_h
+                    ws.add_image(oxl_img_b, "A9")
+                
+                if img_after is not None:
+                    img_a_resized = cv2.resize(img_after, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                    buf_a = io.BytesIO(cv2.imencode('.png', img_a_resized)[1].tobytes())
+                    oxl_img_a = OpenpyxlImage(buf_a)
+                    oxl_img_a.width, oxl_img_a.height = target_w, target_h
+                    ws.add_image(oxl_img_a, "E9")
+            except Exception as e:
+                print(e)
 
         return output_excel.getvalue()
-
-    @staticmethod
-    def build_word(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig,
-                   route_name, stake_mileage, slope_dir, orig_level, new_level,
-                   cost_val, overview_desc, suggest_desc, memo_desc=""):
-        if not HAS_DOCX:
-            return None
-
-        doc = docx.Document()
-        section = doc.sections[0]
-        section.top_margin = Inches(0.787)
-        section.bottom_margin = Inches(0.787)
-        section.left_margin = Inches(0.787)
-        section.right_margin = Inches(0.787)
-
-        p_title = doc.add_paragraph()
-        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_title.paragraph_format.space_before = Pt(0)
-        p_title.paragraph_format.space_after = Pt(2)
-        p_title.paragraph_format.line_spacing = 1.15
-        
-        run_t1 = p_title.add_run("交通部公路局東區養護工程分局\n")
-        run_t1.font.name = "標楷體"
-        run_t1.font.size = Pt(16)
-        run_t1.font.bold = True
-        run_t1._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
-
-        run_t2 = p_title.add_run("邊坡滾動分級表")
-        run_t2.font.name = "標楷體"
-        run_t2.font.size = Pt(16)
-        run_t2.font.bold = True
-        run_t2._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
-
-        table = doc.add_table(rows=10, cols=8)
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        table.autofit = False
-
-        col_w = [Inches(1.05), Inches(0.85), Inches(0.75), Inches(0.80),
-                 Inches(1.05), Inches(0.80), Inches(0.80), Inches(0.80)]
-        for row in table.rows:
-            for i, w in enumerate(col_w):
-                row.cells[i].width = w
-
-        def set_cell_props(cell, bg_color=None, align_h=WD_ALIGN_PARAGRAPH.CENTER):
-            tcPr = cell._tc.get_or_add_tcPr()
-            vAlign = parse_xml(r'<w:vAlign %s w:val="center"/>' % nsdecls('w'))
-            tcPr.append(vAlign)
-            if bg_color:
-                shd = parse_xml(r'<w:shd %s w:fill="%s"/>' % (nsdecls('w'), bg_color))
-                tcPr.append(shd)
-            borders = parse_xml(
-                r'<w:tcBorders %s>'
-                r'  <w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                r'  <w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                r'  <w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                r'  <w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                r'</w:tcBorders>' % nsdecls('w')
-            )
-            tcPr.append(borders)
-            p = cell.paragraphs[0]
-            p.alignment = align_h
-            p.paragraph_format.space_before = Pt(2)
-            p.paragraph_format.space_after = Pt(2)
-            p.paragraph_format.line_spacing = 1.0
-
-        def fill_cell(cell, text, bold=False, font_size=10, bg_color=None, align_h=WD_ALIGN_PARAGRAPH.CENTER):
-            set_cell_props(cell, bg_color, align_h)
-            p = cell.paragraphs[0]
-            p.text = ""
-            for line_idx, line in enumerate(text.split('\n')):
-                if line_idx > 0:
-                    p.add_run().add_break()
-                run = p.add_run(line)
-                run.font.name = "Times New Roman"
-                run.font.size = Pt(font_size)
-                run.font.bold = bold
-                run.font.color.rgb = RGBColor(0, 0, 0)
-                run._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
-
-        fill_cell(table.cell(0, 0), "養護單位", bold=True, bg_color="EDEDED")
-        c_m0 = table.cell(0, 1)
-        c_m0.merge(table.cell(0, 3))
-        fill_cell(c_m0, "交通部公路局東區養護工程分局南澳工務段", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        fill_cell(table.cell(0, 4), "邊坡\n原有分級", bold=True, bg_color="EDEDED")
-        c_m1 = table.cell(0, 5)
-        c_m1.merge(table.cell(0, 7))
-        box_a = "■" if "A" in orig_level else "□"
-        box_b = "■" if "B" in orig_level else "□"
-        box_c = "■" if "C" in orig_level else "□"
-        box_d = "■" if "D" in orig_level else "□"
-        box_none = "■" if "無" in orig_level else "□"
-        orig_boxes = f"{box_a}A級邊坡  {box_b}B級邊坡\n{box_c}C級邊坡  {box_d}D級邊坡\n{box_none}無"
-        fill_cell(c_m1, orig_boxes, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        fill_cell(table.cell(1, 0), "邊坡位置", bold=True, bg_color="EDEDED")
-        c_m2 = table.cell(1, 1)
-        c_m2.merge(table.cell(1, 3))
-        fill_cell(c_m2, f"{route_name} ({slope_dir})", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        fill_cell(table.cell(1, 4), "里 程", bold=True, bg_color="EDEDED")
-        c_m3 = table.cell(1, 5)
-        c_m3.merge(table.cell(1, 7))
-        box_shun = "■" if "順" in slope_dir else "□"
-        box_ni = "■" if "逆" in slope_dir else "□"
-        fill_cell(c_m3, f"{stake_mileage}    {box_shun}順樁    {box_ni}逆樁", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        fill_cell(table.cell(2, 0), "災害\n所需經費", bold=True, bg_color="EDEDED")
-        c_m4 = table.cell(2, 1)
-        c_m4.merge(table.cell(2, 3))
-        fill_cell(c_m4, f"{cost_val} 元", font_size=10, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        fill_cell(table.cell(2, 4), "邊坡\n等級調整", bold=True, bg_color="EDEDED")
-        c_m5 = table.cell(2, 5)
-        c_m5.merge(table.cell(2, 7))
-        fill_cell(c_m5, f"{orig_level}  →  {new_level}", font_size=11, bold=True, align_h=WD_ALIGN_PARAGRAPH.CENTER)
-
-        fill_cell(table.cell(3, 0), "現況概述", bold=True, bg_color="EDEDED")
-        c_m6 = table.cell(3, 1)
-        c_m6.merge(table.cell(3, 7))
-        overview_text = f"{overview_desc}\n(AI 判釋裸露崩塌比例約 {metrics['scar']}，異常單元 {len(polys)} 處)"
-        fill_cell(c_m6, overview_text, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        fill_cell(table.cell(4, 0), "擬改善情形", bold=True, bg_color="EDEDED")
-        c_m7 = table.cell(4, 1)
-        c_m7.merge(table.cell(4, 7))
-        fill_cell(c_m7, suggest_desc, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        c_m8 = table.cell(5, 0)
-        c_m8.merge(table.cell(5, 3))
-        fill_cell(c_m8, "邊坡滾動前 (原始巡檢照片)", bold=True, bg_color="EDEDED")
-
-        c_m9 = table.cell(5, 4)
-        c_m9.merge(table.cell(5, 7))
-        fill_cell(c_m9, "邊坡滾動後 (AI 破壞特徵標註成果圖)", bold=True, bg_color="EDEDED")
-
-        c_img_l = table.cell(6, 0)
-        c_img_l.merge(table.cell(6, 3))
-        set_cell_props(c_img_l, align_h=WD_ALIGN_PARAGRAPH.CENTER)
-
-        c_img_r = table.cell(6, 4)
-        c_img_r.merge(table.cell(6, 7))
-        set_cell_props(c_img_r, align_h=WD_ALIGN_PARAGRAPH.CENTER)
-
-        aspect_ratio = float(h_orig) / float(w_orig)
-        thumb_w = 720
-        thumb_h = int(thumb_w * aspect_ratio)
-
-        raw_thumb = cv2.resize(raw_img, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
-        res_thumb = cv2.resize(annotated_bgr, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
-
-        raw_tmp = io.BytesIO(cv2.imencode('.png', raw_thumb)[1].tobytes())
-        res_tmp = io.BytesIO(cv2.imencode('.png', res_thumb)[1].tobytes())
-
-        p_l = c_img_l.paragraphs[0]
-        p_l.text = ""
-        p_l.add_run().add_picture(raw_tmp, width=Inches(3.2))
-
-        p_r = c_img_r.paragraphs[0]
-        p_r.text = ""
-        p_r.add_run().add_picture(res_tmp, width=Inches(3.2))
-
-        fill_cell(table.cell(7, 0), "備註", bold=True, bg_color="EDEDED")
-        c_m10 = table.cell(7, 1)
-        c_m10.merge(table.cell(7, 7))
-        memo_content = memo_desc if memo_desc else "本巡檢評估成果由南澳工務段邊坡影像破壞辨識系統產製，經無人機原生解析度驗證與合規檢核。"
-        fill_cell(c_m10, memo_content, font_size=9.5, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        c_s1 = table.cell(8, 0)
-        c_s1.merge(table.cell(8, 2))
-        fill_cell(c_s1, "工務段:  段長：____________", font_size=10, bold=True, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        c_s2 = table.cell(8, 3)
-        c_s2.merge(table.cell(8, 7))
-        fill_cell(c_s2, "主管單位:  科長/分局長：____________", font_size=10, bold=True, align_h=WD_ALIGN_PARAGRAPH.LEFT)
-
-        p_bottom = doc.add_paragraph()
-        p_bottom.paragraph_format.space_before = Pt(4)
-        p_bottom.paragraph_format.space_after = Pt(0)
-        run_bottom = p_bottom.add_run("註：本報告表係用於邊坡調整適用之，1式3份報分局核定。")
-        run_bottom.font.name = "Times New Roman"
-        run_bottom.font.size = Pt(9)
-        run_bottom.font.italic = True
-        run_bottom._element.rPr.rFonts.set(docx.oxml.ns.qn('w:eastAsia'), '標楷體')
-
-        out_docx = io.BytesIO()
-        doc.save(out_docx)
-        return out_docx.getvalue()
 
     @staticmethod
     def build_cad_dxf(polys, w_orig, h_orig, route_name, stake_mileage, line_style="dashed"):
@@ -574,37 +358,40 @@ class SlopeReportGenerator:
 
 
 # ==============================================================================
-# 側邊欄控制台
+# 側邊欄控制台 (包含邊坡分級 Excel 台帳載入)
 # ==============================================================================
 with st.sidebar:
-    st.header("🎛 邊坡控制台")
-    st.subheader("輪廓標註樣式自訂")
+    st.header("🗄️ 邊坡台帳資料庫")
+    db_file = st.file_uploader("匯入『邊坡分級.xlsx』(自動帶入台帳資料)", type=["xlsx"])
     
-    color_options = {
-        "工程紅 (#FF0000)": "#FF0000",
-        "青藍 (#00E5FF)": "#00E5FF",
-        "警戒黃 (#FFD600)": "#FFD600",
-        "高對比綠 (#00E676)": "#00E676",
-        "純白 (#FFFFFF)": "#FFFFFF"
-    }
+    db_options = []
+    df_db = None
+    if db_file:
+        try:
+            df_db = pd.read_excel(db_file)
+            # 嘗試抓取常見欄位名稱組成選單
+            for idx, row in df_db.iterrows():
+                r_name = row.get("路線", "未知路線")
+                r_start = row.get("起點里程", "")
+                r_end = row.get("迄點里程", "")
+                db_options.append(f"{r_name} {r_start}~{r_end} (Row {idx})")
+        except Exception:
+            st.error("讀取台帳失敗，請確認檔案格式。")
+            
+    sel_slope = st.selectbox("選擇既有邊坡", db_options) if db_options else None
+    
+    st.markdown("---")
+    st.header("🎛 標註樣式與 AI 參數")
+    
+    color_options = {"工程紅 (#FF0000)": "#FF0000", "青藍 (#00E5FF)": "#00E5FF", "警戒黃 (#FFD600)": "#FFD600", "高對比綠 (#00E676)": "#00E676"}
     stroke_color = color_options[st.selectbox("線條顏色", list(color_options.keys()), index=0)]
     
-    line_style_map = {
-        "虛線": "dashed", 
-        "實線": "solid", 
-        "中心線": "centerline", 
-        "點線": "dotted"
-    }
+    line_style_map = {"虛線": "dashed", "實線": "solid", "中心線": "centerline", "點線": "dotted"}
     active_line_style = line_style_map[st.selectbox("線條種類", list(line_style_map.keys()), index=0)]
-    
     active_stroke_width = st.slider("粗細 (px)", 1, 12, 4)
-    st.markdown("---")
-    suppress_road = st.checkbox("智慧避開底部道路", value=False)
-    road_dilate = st.slider("底部道路遮蔽強度", 1, 6, 2)
+    
     sensitivity = st.slider("辨識敏感度 (%)", 10, 100, 50, 5)
     min_area = st.slider("雜訊過濾閥值 (%)", 0.05, 2.0, 0.2, 0.05)
-    manual_y = st.slider("高程區間 (%)", 0, 100, (0, 100))
-    manual_x = st.slider("橫向區間 (%)", 0, 100, (0, 100))
 
 
 # ==============================================================================
@@ -615,23 +402,38 @@ st.markdown("""
 <div class="app-subtitle">公路邊坡分級管理系統 ｜ 邊坡滾動分級表與 CAD/Word/Excel 匯出版</div>
 """, unsafe_allow_html=True)
 
-tab_cv, tab_audit = st.tabs(["影像辨識與編輯", "A級降等合規審查"])
+tab_cv, tab_audit = st.tabs(["影像辨識與滾動報表", "A級降等合規審查"])
 
 with tab_cv:
-    uploaded_file = st.file_uploader("匯入巡查或空拍照片 (JPG/PNG)", type=["jpg", "jpeg", "png"])
+    # 雙時序照片上傳區 (滾動前/後)
+    c_up1, c_up2 = st.columns(2)
+    with c_up1:
+        file_before = st.file_uploader("📸 上傳『邊坡滾動前』照片", type=["jpg", "jpeg", "png"])
+    with c_up2:
+        file_after = st.file_uploader("📸 上傳『邊坡滾動後』照片 (進行 AI 辨識)", type=["jpg", "jpeg", "png"])
 
-    if uploaded_file is not None:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        raw_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        h_orig, w_orig = raw_img.shape[:2]
+    img_before_cv = None
+    img_after_cv = None
+    annotated_bgr = None
+    metrics = {"veg": "0.00 %", "scar": "0.00 %", "color": "#00E676", "status": "NORMAL"}
+    w_orig, h_orig = 1920, 1080 # 預設解析度
+
+    if file_before:
+        file_bytes = np.asarray(bytearray(file_before.read()), dtype=np.uint8)
+        img_before_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+    if file_after:
+        file_bytes = np.asarray(bytearray(file_after.read()), dtype=np.uint8)
+        img_after_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        h_orig, w_orig = img_after_cv.shape[:2]
 
         polys_detected, metrics = SlopeVisionEngine.analyze(
-            raw_img, sensitivity, min_area, suppress_road, road_dilate, manual_y, manual_x
+            img_after_cv, sensitivity, min_area, False, 2, (0, 100), (0, 100)
         )
 
-        if "user_polys" not in st.session_state or st.session_state.get("last_file") != uploaded_file.name:
+        if "user_polys" not in st.session_state or st.session_state.get("last_file") != file_after.name:
             st.session_state.user_polys = [p.copy() for p in polys_detected]
-            st.session_state.last_file = uploaded_file.name
+            st.session_state.last_file = file_after.name
 
         metrics_html = f"""
         <div class="metrics-wrapper">
@@ -656,55 +458,26 @@ with tab_cv:
         st.markdown(metrics_html, unsafe_allow_html=True)
 
         annotated_bgr = SlopeVisionEngine.render_polygons(
-            raw_img, st.session_state.user_polys, color_hex=stroke_color, line_style=active_line_style, thickness=active_stroke_width
+            img_after_cv, st.session_state.user_polys, color_hex=stroke_color, line_style=active_line_style, thickness=active_stroke_width
         )
         
-        c_l, c_r = st.columns(2)
-        with c_l:
-            st.caption("原始照片")
-            st.image(cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB), use_container_width=True)
-        with c_r:
-            st.caption("AI 標註結果")
-            st.image(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
-
-        st.markdown("---")
-
-        # =====================================================================
-        # 互動畫布編輯器 (HTML Canvas)
-        # =====================================================================
-        st.subheader("🖱️ 物件導向圖面直接編輯器 (含回復上一步驟與手動新增)")
-        st.caption("【操作指引】：\n"
-                   "• **↩ 回復上一步驟**：點擊按鈕或按 `Ctrl + Z` 可即時復原誤刪或拉錯的節點！\n"
-                   "• **➕ 手動新增區域**：點擊切換模式，於圖面點擊左鍵畫點，按 `Enter` 閉合完成。\n"
-                   "• **🗑️ 刪除功能**：選取多邊形後按『刪除區域』；於節點上按『右鍵』可刪除單一節點。")
-
+        # 互動畫布編輯器
         target_display_w = 1280
         aspect_ratio = float(h_orig) / float(w_orig)
-        target_display_h = int(target_display_w * aspect_ratio)
-
-        resized_for_web = cv2.resize(raw_img, (target_display_w, target_display_h), interpolation=cv2.INTER_AREA)
+        resized_for_web = cv2.resize(img_after_cv, (target_display_w, int(target_display_w * aspect_ratio)), interpolation=cv2.INTER_AREA)
         _, buf = cv2.imencode('.jpg', resized_for_web, [cv2.IMWRITE_JPEG_QUALITY, 85])
         img_b64 = base64.b64encode(buf.tobytes()).decode('utf-8')
 
-        polys_js = []
-        for p in st.session_state.user_polys:
-            pts = [[float(pt[0]), float(pt[1])] for pt in p]
-            polys_js.append(pts)
+        polys_js = [[[float(pt[0]), float(pt[1])] for pt in p] for p in st.session_state.user_polys]
 
         html_template_path = "canvas_editor.html"
         if os.path.exists(html_template_path):
             with open(html_template_path, "r", encoding="utf-8") as f:
-                html_content = f.read()
-            html_content = html_content.replace("__IMG_ORIG_W__", str(w_orig))
-            html_content = html_content.replace("__IMG_ORIG_H__", str(h_orig))
-            html_content = html_content.replace("__STROKE_COLOR__", stroke_color)
-            html_content = html_content.replace("__LINE_STYLE__", active_line_style)
-            html_content = html_content.replace("__STROKE_WIDTH__", str(active_stroke_width))
-            html_content = html_content.replace("__IMG_B64__", img_b64)
-            html_content = html_content.replace("__POLYS_DATA__", json.dumps(polys_js))
+                html_content = f.read().replace("__IMG_ORIG_W__", str(w_orig)).replace("__IMG_ORIG_H__", str(h_orig))
+                html_content = html_content.replace("__STROKE_COLOR__", stroke_color).replace("__LINE_STYLE__", active_line_style)
+                html_content = html_content.replace("__STROKE_WIDTH__", str(active_stroke_width))
+                html_content = html_content.replace("__IMG_B64__", img_b64).replace("__POLYS_DATA__", json.dumps(polys_js))
             components.html(html_content, height=730)
-        else:
-            st.error("找不到 canvas_editor.html 檔案，請確認已將該檔案放置於同一個目錄中。")
 
         c_in1, c_in2 = st.columns([3, 1])
         with c_in1:
@@ -713,38 +486,64 @@ with tab_cv:
             if st.button("套用並更新圖檔與台帳", type="primary", use_container_width=True):
                 if json_input:
                     try:
-                        data = json.loads(json_input)
-                        st.session_state.user_polys = [np.array(p, dtype=np.int32) for p in data]
+                        st.session_state.user_polys = [np.array(p, dtype=np.int32) for p in json.loads(json_input)]
                         st.success("已成功同步編輯成果！")
                         st.rerun()
                     except Exception:
-                        st.error("JSON 格式不符，請重新複製！")
+                        st.error("JSON 格式不符！")
 
-        st.markdown("---")
+    st.markdown("---")
 
-        # =====================================================================
-        # 報表匯出區塊 (100% 恢復原先精細的公文排版)
-        # =====================================================================
-        st.subheader("📑 報表與向量檔匯出")
-        cr1, cr2, cr3 = st.columns(3)
-        with cr1: in_route = st.text_input("路線", value="台9丁線")
-        with cr2: in_stake = st.text_input("樁號", value="2k+700")
-        with cr3: in_new_level = st.selectbox("調整後等級", ["A級", "B級", "C+級", "C級", "D級"])
+    # =====================================================================
+    # 報表資料填寫區 (若有上傳台帳，嘗試自動帶入)
+    # =====================================================================
+    st.subheader("📑 滾動分級表資料填寫與匯出")
+    
+    # 初始化預設值
+    d_route, d_start, d_end, d_spec, d_orig_lvl = "台9丁線", "2k+700", "4k+600", "2k+700", "A級邊坡"
+    
+    if df_db is not None and sel_slope:
+        try:
+            # 解析選擇的 Row Index
+            row_idx = int(sel_slope.split("Row ")[1].replace(")", ""))
+            row_data = df_db.iloc[row_idx]
+            d_route = str(row_data.get("路線", d_route))
+            d_start = str(row_data.get("起點里程", d_start))
+            d_end = str(row_data.get("迄點里程", d_end))
+            d_orig_lvl = str(row_data.get("原有分級", d_orig_lvl))
+        except:
+            pass
 
-        cb1, cb2, cb3 = st.columns(3)
+    cr1, cr2, cr3, cr4 = st.columns(4)
+    with cr1: in_route = st.text_input("路線名稱", value=d_route)
+    with cr2: in_start = st.text_input("起點樁號", value=d_start)
+    with cr3: in_end = st.text_input("迄點樁號", value=d_end)
+    with cr4: in_spec = st.text_input("災害發生點 (特定樁號)", value=d_spec)
+
+    cr5, cr6, cr7, cr8 = st.columns(4)
+    with cr5: in_dir = st.selectbox("里程方向", ["順樁", "逆樁"])
+    with cr6: in_orig_level = st.text_input("原有分級", value=d_orig_lvl)
+    with cr7: in_new_level = st.selectbox("調整後等級", ["A級邊坡", "B級邊坡", "C+級邊坡", "C級邊坡", "D級邊坡"])
+    with cr8: in_cost = st.text_input("災害所需經費", value="初估 285,000 元")
+
+    in_overview = st.text_area("現況概述", value="113年10月31日康芮颱風豪大雨影響，台9丁線2k+700上邊坡坡面表土及岩層遇水軟化產生坡面沖蝕，導致植被及表土流失形成大面積坡面裸露。")
+    in_suggest = st.text_area("擬改善情形", value="上邊坡搶修 (型框植生)")
+    in_memo = st.text_area("備註", value="113年12月5日完工，上邊坡搶災(型框植生) [災害編號:114-04-B01]。")
+
+    cb1, cb2 = st.columns(2)
+    with cb1:
+        # 將 img_before 與 annotated_bgr (或 img_after) 傳入 Excel 產生器
+        export_after = annotated_bgr if annotated_bgr is not None else img_after_cv
+        excel_data = SlopeReportGenerator.build_excel(
+            img_before_cv, export_after, metrics, st.session_state.get("user_polys", []), 
+            w_orig, h_orig, in_route, in_start, in_end, in_spec, in_dir, 
+            in_orig_level, in_new_level, in_cost, in_overview, in_suggest, in_memo
+        )
+        st.download_button("📊 匯出對齊版 Excel 滾動分級表", excel_data, f"Slope_{in_route}_{in_spec}.xlsx", use_container_width=True)
         
-        default_cost = "列入年度合約工程辦理"
-        default_overview = "上邊坡受強降雨沖刷掏空，噴凝土與底層岩體滑移露頭顯著，有持續擴大危害行車安全之虞。"
-        default_suggest = "擬辦理刷坡清理浮石，補強型框格梁、掛網錨筋灌漿並增設橫向洩水孔以減緩水壓。"
-        
-        with cb1:
-            st.download_button("📊 匯出 Excel", SlopeReportGenerator.build_excel(raw_img, annotated_bgr, metrics, st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, "上邊坡", "B級", in_new_level, default_overview, default_suggest), f"Slope_{in_route}_{in_stake}.xlsx", use_container_width=True)
-        with cb2:
-            word_bytes = SlopeReportGenerator.build_word(raw_img, annotated_bgr, metrics, st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, "上邊坡", "B級", in_new_level, default_cost, default_overview, default_suggest)
-            if word_bytes:
-                st.download_button("📄 匯出 Word", word_bytes, f"Slope_{in_route}_{in_stake}.docx", use_container_width=True)
-        with cb3:
-            st.download_button("📐 匯出 CAD", SlopeReportGenerator.build_cad_dxf(st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, active_line_style), f"Slope_{in_route}_{in_stake}.dxf", use_container_width=True)
+    with cb2:
+        if "user_polys" in st.session_state:
+            st.download_button("📐 匯出 CAD 向量框線", SlopeReportGenerator.build_cad_dxf(st.session_state.user_polys, w_orig, h_orig, in_route, in_spec, active_line_style), f"Slope_{in_route}_{in_spec}.dxf", use_container_width=True)
 
 with tab_audit:
     st.info("規範依據：東分局養字第1150004213號函。")
