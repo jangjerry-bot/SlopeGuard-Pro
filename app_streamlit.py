@@ -29,7 +29,9 @@ if sys.platform.startswith('win'):
     except AttributeError:
         pass
 
-# 系統頁面設定 (必須在最頂端)
+# ==============================================================================
+# 系統與頁面初始化
+# ==============================================================================
 st.set_page_config(
     page_title="SLOPEGUARD PRO // 邊坡智慧分級",
     page_icon="⛰",
@@ -37,7 +39,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 讀取 Logo
 logo_b64 = ""
 for potential_path in ["LOGO.webp", "logo.webp", "LOGO.png", "logo.png"]:
     if os.path.exists(potential_path):
@@ -47,11 +48,10 @@ for potential_path in ["LOGO.webp", "logo.webp", "LOGO.png", "logo.png"]:
             break
         except Exception:
             pass
-
 logo_img_html = f'<img src="data:image/webp;base64,{logo_b64}" style="height:18px; vertical-align:middle; margin-right:6px;" />' if logo_b64 else ""
 
 # ==============================================================================
-# 行動端 UI 深度優化 CSS (自動適應深/淺色模式)
+# CSS 響應式佈局 (保留 2x2 網格與自適應色彩)
 # ==============================================================================
 st.markdown("""
 <style>
@@ -90,15 +90,12 @@ st.markdown("""
         border-top: 1px solid var(--border-color); z-index: 99999;
         display: flex; justify-content: center; align-items: center;
     }
-    
-    .stFileUploader > div { padding: 0 !important; }
-    button[data-baseweb="tab"] { font-size: 13px !important; padding: 6px 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ==============================================================================
-# 邊坡分析核心引擎
+# 邊坡分析核心引擎 (保留 Canny 邊緣檢測與強效防護版)
 # ==============================================================================
 class SlopeVisionEngine:
     @staticmethod
@@ -210,7 +207,9 @@ class SlopeVisionEngine:
             cls.draw_styled_polygon(out, pts, color_bgr=color_bgr, thickness=thickness, line_style=line_style)
         return out
 
-
+# ==============================================================================
+# 多格式報表匯出引擎
+# ==============================================================================
 class SlopeReportGenerator:
     @staticmethod
     def build_excel(raw_img, annotated_bgr, metrics, polys, w_orig, h_orig, route_name, stake_mileage, slope_dir, orig_level, new_level, overview_desc, suggest_desc):
@@ -249,13 +248,12 @@ class SlopeReportGenerator:
 
 
 # ==============================================================================
-# 側邊欄控制台 (設定項)
+# 側邊欄控制台
 # ==============================================================================
 with st.sidebar:
     st.header("🎛 邊坡控制台")
     st.subheader("輪廓標註樣式自訂")
     
-    # 強制多行排版，免疫所有編輯器截斷機制
     color_options = {
         "工程紅 (#FF0000)": "#FF0000",
         "青藍 (#00E5FF)": "#00E5FF",
@@ -284,7 +282,7 @@ with st.sidebar:
 
 
 # ==============================================================================
-# 主頁面 UI (極簡響應式設計)
+# 主頁面 UI 
 # ==============================================================================
 st.markdown("""
 <div class="app-title">⛰️ SLOPEGUARD PRO</div>
@@ -309,6 +307,7 @@ with tab_cv:
             st.session_state.user_polys = [p.copy() for p in polys_detected]
             st.session_state.last_file = uploaded_file.name
 
+        # 輸出 2x2 CSS Grid 數據儀表板
         metrics_html = f"""
         <div class="metrics-wrapper">
             <div class="metric-card" style="border-left-color: #00E5FF;">
@@ -343,6 +342,66 @@ with tab_cv:
             st.caption("AI 標註結果")
             st.image(cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB), use_container_width=True)
 
+        st.markdown("---")
+
+        # =====================================================================
+        # 恢復：物件導向圖面直接編輯器 (HTML Canvas)
+        # =====================================================================
+        st.subheader("🖱️ 物件導向圖面直接編輯器 (含回復上一步驟與手動新增)")
+        st.caption("【操作指引】：\n"
+                   "• **↩ 回復上一步驟**：點擊按鈕或按 `Ctrl + Z` 可即時復原誤刪或拉錯的節點！\n"
+                   "• **➕ 手動新增區域**：點擊切換模式，於圖面點擊左鍵畫點，按 `Enter` 閉合完成。\n"
+                   "• **🗑️ 刪除功能**：選取多邊形後按『刪除區域』；於節點上按『右鍵』可刪除單一節點。")
+
+        target_display_w = 1280
+        aspect_ratio = float(h_orig) / float(w_orig)
+        target_display_h = int(target_display_w * aspect_ratio)
+
+        resized_for_web = cv2.resize(raw_img, (target_display_w, target_display_h), interpolation=cv2.INTER_AREA)
+        _, buf = cv2.imencode('.jpg', resized_for_web, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        img_b64 = base64.b64encode(buf.tobytes()).decode('utf-8')
+
+        polys_js = []
+        for p in st.session_state.user_polys:
+            pts = [[float(pt[0]), float(pt[1])] for pt in p]
+            polys_js.append(pts)
+
+        # 讀取外部 HTML 模板，傳入參數
+        html_template_path = "canvas_editor.html"
+        if os.path.exists(html_template_path):
+            with open(html_template_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+            html_content = html_content.replace("__IMG_ORIG_W__", str(w_orig))
+            html_content = html_content.replace("__IMG_ORIG_H__", str(h_orig))
+            html_content = html_content.replace("__STROKE_COLOR__", stroke_color)
+            html_content = html_content.replace("__LINE_STYLE__", active_line_style)
+            html_content = html_content.replace("__STROKE_WIDTH__", str(active_stroke_width))
+            html_content = html_content.replace("__IMG_B64__", img_b64)
+            html_content = html_content.replace("__POLYS_DATA__", json.dumps(polys_js))
+            components.html(html_content, height=730)
+        else:
+            st.error("找不到 canvas_editor.html 檔案，請確認已將該檔案放置於同一個目錄中。")
+
+        # 恢復：JSON 資料套用區塊
+        c_in1, c_in2 = st.columns([3, 1])
+        with c_in1:
+            json_input = st.text_input("貼上圖面最新頂點坐標資料 (JSON)", placeholder="點擊上方『📋 複製最新編輯成果』後貼於此處...", label_visibility="collapsed")
+        with c_in2:
+            if st.button("套用並更新圖檔與台帳", type="primary", use_container_width=True):
+                if json_input:
+                    try:
+                        data = json.loads(json_input)
+                        st.session_state.user_polys = [np.array(p, dtype=np.int32) for p in data]
+                        st.success("已成功同步編輯成果！")
+                        st.rerun()
+                    except Exception:
+                        st.error("JSON 格式不符，請重新複製！")
+
+        st.markdown("---")
+
+        # =====================================================================
+        # 報表匯出區塊
+        # =====================================================================
         st.subheader("📑 報表與向量檔匯出")
         cr1, cr2, cr3 = st.columns(3)
         with cr1: in_route = st.text_input("路線", value="台9丁線")
@@ -363,8 +422,6 @@ with tab_cv:
                 st.download_button("📄 匯出 Word", word_bytes, f"Slope_{in_route}_{in_stake}.docx", use_container_width=True)
         with cb3:
             st.download_button("📐 匯出 CAD", SlopeReportGenerator.build_cad_dxf(st.session_state.user_polys, w_orig, h_orig, in_route, in_stake, active_line_style), f"Slope_{in_route}_{in_stake}.dxf", use_container_width=True)
-            
-        st.caption("💡 小提示：如需 PDF 格式檔案，請下載 Word 後使用『另存新檔為 PDF』，以確保完美保留公文表格格式。")
 
 with tab_audit:
     st.info("規範依據：東分局養字第1150004213號函。")
