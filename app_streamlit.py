@@ -398,23 +398,21 @@ class SlopeReportGenerator:
 
     @staticmethod
     def build_master_control_table_via_template(df_db, active_mileages, template_path="蘇花公路邊坡分級管制樁號位置表（範本）xlsx.xlsx"):
-        """
-        讀取既有範本格式，解析 Raw Data 動態排版、排序編號後填入。
-        徹底實現版面設計與資料層的分離。
-        """
         if not os.path.exists(template_path):
             st.error(f"找不到範本檔：{template_path}，請確保該檔案在目錄下。")
             return None
 
-        # 載入最新上傳的範本檔
         wb = openpyxl.load_workbook(template_path)
         ws = wb.active
 
+        merged_ranges = list(ws.merged_cells.ranges)
+        for m_range in merged_ranges:
+            if m_range.min_row >= 5:
+                ws.unmerge_cells(str(m_range))
+
         df_clean = df_db.copy()
         
-        # 抓取 Raw data 分級 (定性分級)
         lvl_col = "定性分級" if "定性分級" in df_clean.columns else "分級"
-        
         def extract_grade(g):
             g_str = str(g).upper()
             if 'A' in g_str: return 'A'
@@ -422,10 +420,8 @@ class SlopeReportGenerator:
             if 'C' in g_str: return 'C'
             if 'D' in g_str: return 'D'
             return 'Z'
-            
         df_clean['SortGrade'] = df_clean[lvl_col].apply(extract_grade) if lvl_col in df_clean.columns else 'Z'
         
-        # 動態分群與精確數值排序: 確保 12k 在 2k 之後
         def parse_mileage(m_str):
             try:
                 parts = str(m_str).lower().split('k')
@@ -450,29 +446,29 @@ class SlopeReportGenerator:
             
         df_sorted = df_clean.sort_values(by=sort_cols).reset_index(drop=True)
         
-        # 統計數量
         count_A = sum(df_sorted['SortGrade'] == 'A')
         count_B = sum(df_sorted['SortGrade'] == 'B')
         count_C = sum(df_sorted['SortGrade'] == 'C')
         count_D = sum(df_sorted['SortGrade'] == 'D')
         total_count = len(df_sorted)
 
-        # 覆寫範本上方統計列
         ws['D3'], ws['E3'], ws['F3'], ws['G3'] = count_A, count_B, count_C, count_D
         ws['H3'] = total_count
 
-        # 準備資料填入雙欄
         font_content = Font(name="標楷體", size=10)
         fill_active = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
         thin = Side(border_style="thin", color="000000")
         border_cell = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-        # 先清理範本原有的 5~200 行資料，確保畫面乾淨
         for r in range(5, 200):
             for c in range(1, 13):
                 cell = ws.cell(row=r, column=c)
-                cell.value = ""
-                cell.fill = PatternFill(fill_type=None)
+                if type(cell).__name__ != 'MergedCell':
+                    try:
+                        cell.value = ""
+                        cell.fill = PatternFill()
+                    except:
+                        pass
 
         half_len = (total_count + 1) // 2
         
@@ -482,11 +478,8 @@ class SlopeReportGenerator:
             r_idx = 5 + (idx - half_len) if is_right_col else 5 + idx
 
             ws.row_dimensions[r_idx].height = 16.5
-
-            # 1. 重新自動賦予編號
             ws.cell(row=r_idx, column=c_offset+1, value=idx+1)
             
-            # 2. 自動組合里程樁字串 (對應 Raw Data)
             if "里程樁" in row and pd.notna(row["里程樁"]):
                 raw_full_mil = str(row["里程樁"]).replace("*", "")
             else:
@@ -499,7 +492,6 @@ class SlopeReportGenerator:
                 if spec and spec != "nan":
                     raw_full_mil += f"({spec})"
             
-            # 判斷是否為本次標記滾動
             is_active = False
             for act_m in active_mileages:
                 clean_act = act_m.replace("*", "")
@@ -510,16 +502,13 @@ class SlopeReportGenerator:
             display_mil = f"*{raw_full_mil}" if is_active else raw_full_mil
             ws.cell(row=r_idx, column=c_offset+2, value=display_mil)
 
-            # 3. 順/逆樁 (對應 Raw Data '方向' 或 '順/逆樁')
             dir_val = str(row.get("順/逆樁", row.get("方向", "")))
             if dir_val == "nan": dir_val = ""
             ws.cell(row=r_idx, column=c_offset+3, value=dir_val)
 
-            # 4. 定性分級 (取出純淨 ABCD)
             pure_grade = row['SortGrade']
             ws.cell(row=r_idx, column=c_offset+4, value=pure_grade if pure_grade != 'Z' else "")
 
-            # 5. 發生日期 & 預計調降日期 (若 Raw Data 有紀錄則帶入)
             date_val = str(row.get("發生日期", ""))
             if date_val == "nan": date_val = ""
             ws.cell(row=r_idx, column=c_offset+5, value=date_val)
@@ -528,13 +517,11 @@ class SlopeReportGenerator:
             if fix_date == "nan": fix_date = ""
             ws.cell(row=r_idx, column=c_offset+6, value=fix_date)
             
-            # 格線與字型套用
             for c in range(1, 7):
                 cell = ws.cell(row=r_idx, column=c_offset+c)
                 cell.border = border_cell
                 cell.font = font_content
                 cell.alignment = Alignment(horizontal="left" if c in [2] else "center", vertical="center")
-                # 滾動的邊坡標記橘色底
                 if is_active:
                     cell.fill = fill_active
 
@@ -547,7 +534,6 @@ class SlopeReportGenerator:
 # 系統狀態與 Raw Data 資料庫管理
 # ==============================================================================
 if 'df_db' not in st.session_state:
-    # 預設載入 Raw Data，並自動壓平雙欄
     if os.path.exists("邊坡資料.xlsx"):
         st.session_state.df_db = load_and_clean_db("邊坡資料.xlsx")
     elif os.path.exists("蘇花公路邊坡分級管制樁號位置表（範本）xlsx.xlsx"):
@@ -772,10 +758,36 @@ with tab_cv:
             else:
                 st.error("請先於左側邊欄選擇欲滾動更新的既有邊坡！")
 
+# ==============================================================================
+# 115年公路局修訂版：嚴謹的 A級邊坡降等合規審查
+# ==============================================================================
 with tab_audit:
-    st.info("規範依據：東分局養字第1150004213號函。")
+    st.markdown("### 🏛️ A級邊坡降至 C+ 或 C 級合規性審查")
+    st.info("規範依據：公路局115年5月修訂版「公路邊坡分級管理機制」 (105年10月31日路養管字第1050135768號函)[cite: 13, 14, 15]")
+    
+    st.markdown("#### 第一階段：啟動時機與條件[cite: 15]")
+    check_1 = st.checkbox("☑ 年度汛期後啟動 (已於該年度汛期正式結束後提出申請)[cite: 15]")
+    check_2 = st.checkbox("☑ 完成長期觀測 (已歷經至少『1個完整汛期』的穩定性觀察與復建效能檢核)[cite: 15]")
+    
+    st.markdown("#### 第二階段：資料準備與專家佐證[cite: 15]")
+    check_3 = st.checkbox("☑ 具備致災原因探討 (已釐清原始災害機制)[cite: 15]")
+    check_4 = st.checkbox("☑ 具備削減措施說明 (已包含工程與防護成效佐證)[cite: 15]")
+    check_5 = st.checkbox("☑ 具備完整佐證資料 (含安定分析結果、影像判釋、現場照片及文字降等理由)[cite: 15]")
+    check_6 = st.checkbox("☑ 已由所轄分局召開專家審查會議 (邀請專家、學者或技師就致災原因與削減措施進行降級檢討)[cite: 15]")
+    
+    st.markdown("---")
+    st.markdown("#### 第三階段：降等分流判定 (C+級 或 C級)[cite: 13, 14, 15]")
+    has_remote_factor = st.radio(
+        "該邊坡是否具備「遠端致災因素」？(如：需持續關注之上/下邊坡、曲流/浪襲攻擊面、坡頂人為開發、明隧道上方邊坡等)[cite: 13, 14]",
+        ("否 (無遠端致災因素，符合降至 C級)", "是 (具備遠端致災因素，僅能降至 C+級)")
+    )
+
     if st.button("執行 115 年合規性檢核", type="primary", use_container_width=True):
-        st.success("【審核通過】：各項法定要件均合規，准予由 A 級調降！")
+        if all([check_1, check_2, check_3, check_4, check_5, check_6]):
+            target_level = "C+ 級" if "是" in has_remote_factor else "C 級"
+            st.success(f"✅ 【審核通過】：各項法定要件均合規，專家會議佐證完備！\n\n📌 判定結果：該邊坡符合降等至 **{target_level}** 邊坡之條件。")
+        else:
+            st.error("❌ 【審核退回】：未滿足 115 年修訂版降等要件。請確保已歷經完整汛期、備妥工程防護佐證，並完成專家審查會議。")
 
 with tab_control:
     st.subheader("📑 邊坡分級管制總表 (套用範本格式)")
