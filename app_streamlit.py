@@ -545,16 +545,16 @@ if 'active_mileages' not in st.session_state:
     st.session_state.active_mileages = []
 
 with st.sidebar:
-    st.header("🗄️ Raw Data 邊坡台帳資料庫")
+    st.header("🗄️ Raw Data 邊坡資料庫")
     
     if not st.session_state.df_db.empty:
-        st.success("✅ 已載入台帳資料庫")
+        st.success("✅ 已載入資料庫")
     
-    db_file = st.file_uploader("手動更新 Raw Data 台帳覆蓋", type=["xlsx"])
+    db_file = st.file_uploader("手動更新 Raw Data 資料覆蓋", type=["xlsx"])
     if db_file:
         try:
             st.session_state.df_db = load_and_clean_db(db_file)
-            st.success("✅ 已切換並壓平為最新台帳")
+            st.success("✅ 已切換並壓平為最新資料")
         except Exception:
             st.error("讀取失敗，請確認檔案格式。")
             
@@ -596,7 +596,7 @@ st.markdown("""
 <div class="app-subtitle">公路邊坡分級管理系統 ｜ 邊坡滾動分級表與 CAD/Word/Excel 匯出版</div>
 """, unsafe_allow_html=True)
 
-tab_cv, tab_audit, tab_control = st.tabs(["影像辨識與滾動報表", "A級降等合規審查", "總台帳與管制位置表"])
+tab_cv, tab_audit, tab_control = st.tabs(["影像辨識與滾動報表", "A級降等合規審查", "管制總表生成"])
 
 with tab_cv:
     c_up1, c_up2 = st.columns(2)
@@ -665,7 +665,7 @@ with tab_cv:
         c_in1, c_in2 = st.columns([3, 1])
         with c_in1: json_input = st.text_input("貼上圖面最新頂點坐標資料 (JSON)", placeholder="點擊上方『📋 複製最新編輯成果』後貼於此處...", label_visibility="collapsed")
         with c_in2:
-            if st.button("套用並更新圖檔與台帳", type="primary", use_container_width=True):
+            if st.button("套用並更新圖檔", type="primary", use_container_width=True):
                 if json_input:
                     try:
                         st.session_state.user_polys = [np.array(p, dtype=np.int32) for p in json.loads(json_input)]
@@ -754,7 +754,7 @@ with tab_cv:
                 if full_mil not in st.session_state.active_mileages:
                     st.session_state.active_mileages.append(full_mil)
                     
-                st.success(f"✅ 已成功將 {full_mil} 從 {d_orig_lvl} 級更新至 {in_new_level}！系統已自動將其搬移分類，請至「總台帳與管制位置表」匯出最新版範本。")
+                st.success(f"✅ 已成功將 {full_mil} 從 {d_orig_lvl} 級更新至 {in_new_level}！系統已自動將其搬移分類，請至「管制總表生成」匯出最新版。")
             else:
                 st.error("請先於左側邊欄選擇欲滾動更新的既有邊坡！")
 
@@ -763,22 +763,22 @@ with tab_cv:
 # ==============================================================================
 with tab_audit:
     st.markdown("### 🏛️ A級邊坡降至 C+ 或 C 級合規性審查")
-    st.info("規範依據：公路局115年5月修訂版「公路邊坡分級管理機制」 (105年10月31日路養管字第1050135768號函)[cite: 13, 14, 15]")
+    st.info("規範依據：公路局115年5月修訂版「公路邊坡分級管理機制」 (115年5月19日路養護字第1155009531號)")
     
-    st.markdown("#### 第一階段：啟動時機與條件[cite: 15]")
-    check_1 = st.checkbox("☑ 年度汛期後啟動 (已於該年度汛期正式結束後提出申請)[cite: 15]")
-    check_2 = st.checkbox("☑ 完成長期觀測 (已歷經至少『1個完整汛期』的穩定性觀察與復建效能檢核)[cite: 15]")
+    st.markdown("#### 第一階段：啟動時機與條件")
+    check_1 = st.checkbox("☑ 年度汛期後啟動 (已於該年度汛期正式結束後提出申請)")
+    check_2 = st.checkbox("☑ 完成長期觀測 (已歷經至少『1個完整汛期』的穩定性觀察與復建效能檢核)")
     
-    st.markdown("#### 第二階段：資料準備與專家佐證[cite: 15]")
-    check_3 = st.checkbox("☑ 具備致災原因探討 (已釐清原始災害機制)[cite: 15]")
-    check_4 = st.checkbox("☑ 具備削減措施說明 (已包含工程與防護成效佐證)[cite: 15]")
-    check_5 = st.checkbox("☑ 具備完整佐證資料 (含安定分析結果、影像判釋、現場照片及文字降等理由)[cite: 15]")
-    check_6 = st.checkbox("☑ 已由所轄分局召開專家審查會議 (邀請專家、學者或技師就致災原因與削減措施進行降級檢討)[cite: 15]")
+    st.markdown("#### 第二階段：資料準備與專家佐證")
+    check_3 = st.checkbox("☑ 具備致災原因探討 (已釐清原始災害機制)")
+    check_4 = st.checkbox("☑ 具備削減措施說明 (已包含工程與防護成效佐證)")
+    check_5 = st.checkbox("☑ 具備完整佐證資料 (含安定分析結果、影像判釋、現場照片及文字降等理由)")
+    check_6 = st.checkbox("☑ 已由所轄分局召開專家審查會議 (邀請專家、學者或技師就致災原因與削減措施進行降級檢討)")
     
     st.markdown("---")
-    st.markdown("#### 第三階段：降等分流判定 (C+級 或 C級)[cite: 13, 14, 15]")
+    st.markdown("#### 第三階段：降等分流判定 (C+級 或 C級)")
     has_remote_factor = st.radio(
-        "該邊坡是否具備「遠端致災因素」？(如：需持續關注之上/下邊坡、曲流/浪襲攻擊面、坡頂人為開發、明隧道上方邊坡等)[cite: 13, 14]",
+        "該邊坡是否具備「遠端致災因素」？(如：需持續關注之上/下邊坡、曲流/浪襲攻擊面、坡頂人為開發、明隧道上方邊坡等)",
         ("否 (無遠端致災因素，符合降至 C級)", "是 (具備遠端致災因素，僅能降至 C+級)")
     )
 
